@@ -15,12 +15,6 @@ from influxdb_client.domain.write_precision import WritePrecision
 sys.path.insert(1, '../config')
 from influx_credentials import *
 
-#next variables must be defined in ../config/influx_credentials.py
-#url="http://xxxx:8086"
-#bucket = "yourinfluxbucket"
-#org = "yourinfluxorganization"
-#token = "yourinfluxtoken"
-#broker_address="yourmqttbrokeripaddress"
 
 wattsPerTick = 33
 
@@ -31,16 +25,16 @@ def saveData(myData):
         return
 
     dbclient = influxdb_client.InfluxDBClient(
-        url=url,
-        token=token,
-        org=org
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
     )
     write_api = dbclient.write_api(write_options=SYNCHRONOUS)
 
     value = int(myData['value'])
     watts = wattsPerTick * value;
     p = influxdb_client.Point("watts").tag("name", "electricity").field("consumed", watts).time(1000 * myData['ts'],write_precision=WritePrecision.MS)
-    write_api.write(bucket=bucket, org=org, record=p)
+    write_api.write(bucket=influx_credentials.bucket, org=influx_credentials.org, record=p)
        
     now = int(datetime.now(timezone.utc).timestamp())
     print(datetime.now(), "count=", value, ":", watts, "W delay:",now - myData['ts'])
@@ -66,13 +60,13 @@ def on_disconnect(client, userdata, rc):
     client.reconnect()
 
 msgqueue = Queue(maxsize=4)    
-#broker_address="192.168.101.231"
 pid = os.getpid()
+
 client = mqtt.Client("influx_electricity_saver:" + str(pid)) #create new instance
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_disconnect = on_disconnect
-client.connect(broker_address,port=1883, keepalive=60) 
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
 print(datetime.now(), "Start")
 client.loop_start()
 

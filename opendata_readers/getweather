@@ -1,0 +1,158 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+from datetime import timezone
+from datetime import timedelta
+import urllib.request
+import urllib.error
+import requests
+import json
+import paho.mqtt.client as mqtt 
+import sys
+
+sys.path.insert(1, '../config')
+from influx_credentials import *
+
+
+def queryCloud():
+
+    UnitGroup='metric'
+    now = datetime.now()
+    end = now
+
+    StartDate = now.strftime("%Y-%m-%d")
+    EndDate= end.strftime("%Y-%m-%d")
+
+    print("from",StartDate,"to",EndDate)
+
+    ContentType="json"
+
+    #include sections
+    #values include days,hours,current,alerts
+    Include="hours"
+
+    #basic query including location
+    ApiQuery = weather_credentials.BaseURL + weather_credentials.Location
+
+    #append the start and end date if present
+    if (len(StartDate)):
+        ApiQuery+="/"+StartDate
+        if (len(EndDate)):
+            ApiQuery+="/"+EndDate
+
+    #Url is completed. Now add query parameters (could be passed as GET or POST)
+    ApiQuery+="?"
+
+    #append each parameter as necessary
+    if (len(UnitGroup)):
+        ApiQuery+="&unitGroup="+UnitGroup
+
+    if (len(ContentType)):
+        ApiQuery+="&contentType="+ContentType
+
+    if (len(Include)):
+        ApiQuery+="&include="+Include
+
+    ApiQuery+="&key="+weather_credentials.ApiKey
+
+
+    try: 
+        data = requests.get(ApiQuery)
+        
+    except urllib.error.HTTPError  as e:
+        ErrorInfo= e.read().decode() 
+        print('Error code: ', e.code, ErrorInfo)
+        sys.exit()
+    except  urllib.error.URLError as e:
+        ErrorInfo= e.read().decode() 
+        print('Error code: ', e.code,ErrorInfo)
+        sys.exit()
+
+    return data.json()
+
+def on_message(client, userdata, message):
+    print(message.payload)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client,userdata,result):
+    pass
+
+def publishCelestialData(recData, tzoffset):
+    ts = int(recData['datetimeEpoch']) + int(3600 * tzoffset)
+
+    jsonRec = {
+        "id": "celestials",
+        "ts": ts,
+        "day": datetime.fromtimestamp(ts).strftime("%Y%m%d"),
+        "sunrise": recData['sunrise'],
+        "sunset": recData['sunset'],
+        "sunriseEpoch": recData['sunriseEpoch'],
+        "sunsetEpoch":  recData['sunsetEpoch'],
+        "moonphase": recData['moonphase']
+    }    
+    topic = 'home/kallio/celestials'
+    msg = json.dumps(jsonRec)
+    client.publish(topic, msg, qos=0, retain=True)
+
+
+def publishHourData(recData, tzoffset):
+    ts = int(recData['datetimeEpoch'])
+
+    jsonRec = {
+        "id": "weather",
+        "hour" : datetime.utcfromtimestamp(ts).strftime("%H"),
+        "ts": ts,
+        "day": datetime.utcfromtimestamp(ts).strftime("%Y%m%d%H"),
+        "uvindex": recData['uvindex'],
+        "solarradiation": recData['solarradiation'],
+        "solarenergy": recData['solarenergy'],
+        "cloudcover": recData['cloudcover'],
+        "snow": recData['snow'],
+        "snowdepth": recData['snowdepth'],
+        "pressure": recData['pressure'],
+        "temperature": recData['temp'],
+        "humidity": recData['humidity'],
+        "windspeed": recData['windspeed'],
+        "winddir": recData['winddir'],
+        "humidity": recData['humidity'],
+        "dew": recData['dew']
+    }    
+    topic = 'home/kallio/weather/' + datetime.utcfromtimestamp(ts).strftime("%H")
+    msg = json.dumps(jsonRec)
+    client.publish(topic, msg, qos=0, retain=True)
+
+
+client = mqtt.Client("weather forecast reader") #create new instance
+client.on_connect = on_connect
+client.on_message=on_message
+client.on_publish=on_publish
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+x = queryCloud()
+tzoffset = x['tzoffset']
+print("tzoffset=",tzoffset)
+
+for day in x['days']:
+    publishCelestialData(day, tzoffset)
+    for hour in day['hours']:
+        publishHourData(hour, tzoffset)
+
+print('done')
