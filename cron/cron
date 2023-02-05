@@ -1,0 +1,4 @@
+
+4 8,20 * * * python /home/pi/koti/getprices > /dev/null 2>&1
+1 0,7,16 * * * /home/pi/koti/getweather > /dev/null 2>&1
+0 * * * * /home/pi/koti/setcurrentvalues > /dev/null 2>&1

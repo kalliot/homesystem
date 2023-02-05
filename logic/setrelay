@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+import time
+from datetime import datetime
+from datetime import timezone
+import json
+import paho.mqtt.client as mqtt 
+import paho.mqtt.subscribe as subscribe
+from queue import Queue
+import sys
+
+sys.path.insert(1, '../config')
+from influx_credentials import *
+
+
+wattsPerTick = 33                              # one tick is 33W
+currentprice = 300                             # is 3eur/kwh enough high price?
+currentconsumption = int(20000 / wattsPerTick) # 20kW
+avgconsumption = currentconsumption
+relaystate = False
+relayinstance = 0                              # which relay is in use 0..3
+pricelimit = 12                                # in cents
+consumptionlimit = int(2000 / wattsPerTick)    # put relay on in in this consumption
+loadincrement = int(1800 / wattsPerTick)       # load controlled by relay is about 1800W
+                                               # if load is on and consumption is over consumptionlimit + loadincrement
+                                               # then put relay off
+def setRelay(state):
+    relaymsg = {
+        'id': 20,
+        'src':'home/kallio/relayreply',
+        'method':'Switch.Set',
+        'params': {
+                'id':relayinstance,
+                'on':state
+            }
+    }
+    time.sleep(1)  # send consecutive relay orders with 1 sec delay
+    setrelaytopic="shelly1/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+    print(json.dumps(relaymsg))
+    
+
+
+def processData(eldata):
+    global currentprice, currentconsumption, relaystate, avgconsumption
+    changed = False
+    
+    if not (eldata.get('id') is None):
+        id = eldata['id']
+
+        # first check nordpool price
+        if id == 'elprice':
+            current_date = datetime.utcnow().strftime("%Y%m%d%H") 
+            if (current_date != eldata['day']):
+                print("current price is not valid")
+            else:
+                currentprice=int(eldata['price'])
+        
+
+        # second, check current consumption
+        if id[0:5] == 'pulse':
+            currentconsumption = int(eldata['value'])
+            avgconsumption = int(eldata['avg1min'])
+
+
+    # {"src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","method":"NotifyStatus","params":
+    # {"ts":1675072985.86,"switch:1":{"id":1,"apower":0,"current":0,"output":false,"pf":0,"source":"UI"}}}    
+    else:
+        if not (eldata.get('method') is None):
+            method = eldata['method']
+            if method == 'NotifyStatus':
+                params = eldata['params']
+                swname = 'switch:' + str(relayinstance)
+                if not (params.get(swname) is None):
+                    relaydata =  params[swname]
+                    if not (relaydata.get('output') is None):
+                        relaystate = relaydata['output']
+
+
+    if currentprice < pricelimit:  
+        # using avgconsumption, to put relay on more carelessly
+        if avgconsumption <= consumptionlimit:  
+            if (relaystate == False):
+                changed = True
+                relaystate = True
+        else:
+            if currentconsumption > (consumptionlimit + loadincrement):
+                if relaystate == True:  
+                    changed = True
+                    relaystate = False
+    else: 
+        # if price is high, dont care about consumption, just keep relay off.
+        if relaystate == True:  
+            changed = True
+            relaystate = False
+
+    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "consumption=", currentconsumption, "state=", relaystate)
+    if changed:
+        setRelay(relaystate)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client, userdata,result):
+    pass
+
+
+msgqueue = Queue(maxsize=10)
+
+broker_address="192.168.101.231"
+
+
+client = mqtt.Client("setrelay" + str(relayinstance)) #create new instance
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+print("price=", currentprice, "consumption=", currentconsumption, "state=", relaystate)
+
+topics = [("home/kallio/elprice/current",0),("home/kallio/+/parameters/count",0),("shelly1/events/rpc",0)]
+setRelay(False)
+client.subscribe(topics)
+
+while True:
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        processData(json.loads(data))
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+    except:
+        raise        

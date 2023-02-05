@@ -1,0 +1,4 @@
+#!/usr/bin/sh
+/home/pi/koti/setcurrentprice > /dev/null 2>&1
+/home/pi/koti/setcurrentweather > /dev/null 2>&1
+

@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+
+# setcurrentprice - script to be run hourly, just after hour change
+#                   sets the price of current hour.
+
+import time
+from datetime import datetime
+from datetime import timezone
+import json
+import paho.mqtt.client as mqtt 
+import sys
+
+sys.path.insert(1, '../config')
+from influx_credentials import *
+
+
+def processData(eldata):
+    currentpricetopic = "home/kallio/elprice/current"
+    client.publish(currentpricetopic, eldata, qos=0, retain=True)
+
+def on_message(client, userdata, message):
+    processData(message.payload)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client,userdata,result):
+    print("something published")
+
+
+hour = datetime.utcnow().strftime("%H") 
+
+client = mqtt.Client("setcurrentprice") #create new instance
+client.on_connect = on_connect
+client.on_message=on_message
+client.on_publish=on_publish
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+topic = "home/kallio/elprice/" + hour
+client.subscribe(topic)
+
+time.sleep(1)
