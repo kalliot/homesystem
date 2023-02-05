@@ -8,6 +8,7 @@ import urllib.error
 import requests
 import json
 import paho.mqtt.client as mqtt 
+import os
 import sys
 
 sys.path.insert(1, '../config')
@@ -137,7 +138,8 @@ def publishHourData(recData, tzoffset):
     client.publish(topic, msg, qos=0, retain=True)
 
 
-client = mqtt.Client("weather forecast reader") #create new instance
+pid = os.getpid()
+client = mqtt.Client("weather forecast reader"  + str(pid)) #create new instance
 client.on_connect = on_connect
 client.on_message=on_message
 client.on_publish=on_publish

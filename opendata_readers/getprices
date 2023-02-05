@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+
+import time
+from datetime import datetime
+from datetime import timezone
+import urllib.request
+import urllib.error
+import requests
+import json
+import os
+import sys
+import paho.mqtt.client as mqtt 
+
+sys.path.insert(1, '../config')
+from influx_credentials import *
+
+
+def on_message(client, userdata, message):
+    print(message.payload)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client,userdata,result):
+    pass
+
+
+def queryCloud():
+
+    try:
+        data = requests.get(nordpool.BaseURL)
+
+    except urllib.error.HTTPError  as e:
+        ErrorInfo= e.read().decode()
+        print('Error code: ', e.code, ErrorInfo)
+        sys.exit()
+    except  urllib.error.URLError as e:
+        ErrorInfo= e.read().decode()
+        print('Error code: ', e.code,ErrorInfo)
+        sys.exit()
+    return data.json()
+
+
+pid = os.getpid()
+client = mqtt.Client("nordpool reader" + str(pid)) #create new instance
+client.on_connect = on_connect
+client.on_message=on_message
+client.on_publish=on_publish
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+cnt = 0
+
+x = queryCloud()
+now = int(time.time())
+for hour in x:
+    ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+    if (ts > (now - 3600)):    
+        cnt = cnt +1
+        if (cnt > 24):
+            break
+
+        cents = int(float(hour['PriceWithTax'])*100)
+        strhour=datetime.fromtimestamp(ts).strftime("%H")
+        topic = "home/kallio/elprice/" + strhour
+
+        send_msg = {
+                'id': 'elprice',
+                'hour': strhour,
+                'ts': ts,
+                'day': datetime.fromtimestamp(ts).strftime("%Y%m%d%H"),
+                'price': cents
+        }
+
+        msg = json.dumps(send_msg)
+        print(topic, msg)
+        client.publish(topic, msg, qos=0, retain=True)
+
+print("done.")
