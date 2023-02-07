@@ -18,7 +18,7 @@ currentprice = 300                             # is 3eur/kwh enough high price?
 currentconsumption = int(20000 / wattsPerTick) # 20kW
 avgconsumption = currentconsumption
 relaystate = False
-relayinstance = 0                              # which relay is in use 0..3
+relayinstance = 2                              # which relay is in use 0..3
 pricelimit = 12                                # in cents
 consumptionlimit = int(2000 / wattsPerTick)    # put relay on in in this consumption
 loadincrement = int(1800 / wattsPerTick)       # load controlled by relay is about 1800W
@@ -42,7 +42,10 @@ def setRelay(state):
 
 
 def processData(eldata):
-    global currentprice, currentconsumption, relaystate, avgconsumption
+    global currentprice, currentconsumption
+    global relaystate, avgconsumption, pricelimit
+    global consumptionlimit, loadincrement
+
     changed = False
     
     if not (eldata.get('id') is None):
@@ -56,6 +59,11 @@ def processData(eldata):
             else:
                 currentprice=int(eldata['price'])
         
+        if id == 'heatsetup':
+            print("got heatsetup")
+            consumptionlimit = int(eldata['consumptionlimit'] / wattsPerTick)
+            loadincrement = int(eldata['heaterpower'] / wattsPerTick)
+            pricelimit = int(eldata['pricelimit'])
 
         # second, check current consumption
         if id[0:5] == 'pulse':
@@ -124,8 +132,6 @@ def on_publish(client, userdata,result):
 
 msgqueue = Queue(maxsize=10)
 
-broker_address="192.168.101.231"
-
 
 client = mqtt.Client("setrelay" + str(relayinstance)) #create new instance
 client.on_connect = on_connect
@@ -139,7 +145,11 @@ client.loop_start()
 
 print("price=", currentprice, "consumption=", currentconsumption, "state=", relaystate)
 
-topics = [("home/kallio/elprice/current",0),("home/kallio/+/parameters/count",0),("shelly1/events/rpc",0)]
+topics = [("home/kallio/elprice/current",0),
+          ("home/kallio/+/parameters/count",0),
+          ("shelly1/events/rpc",0),
+          ("home/kallio/heating/setup",0)]
+
 setRelay(False)
 client.subscribe(topics)
 
