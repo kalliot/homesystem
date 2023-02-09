@@ -1,9 +1,8 @@
-import time
+#!/usr/bin/env python
+
 from datetime import datetime
-from datetime import timezone
 import json
 import paho.mqtt.client as mqtt 
-import paho.mqtt.subscribe as subscribe
 from queue import Queue
 import sys
 
@@ -35,7 +34,6 @@ def publishRelay(num, state):
     }
     setrelaytopic="home/kallio/relay/" +str(num) +"/shelly"+ str(shellynumber) + "/state"
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
-    print("publishing", setrelaytopic, relaymsg)
 
 def setRelay(num, state):
     global shellynumber
@@ -55,15 +53,6 @@ def setRelay(num, state):
 
 def processData(eldata):
     global relays
-
-    # {"src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","method":"NotifyStatus","params":
-    # {"ts":1675072985.86,"switch:1":{"id":1,"apower":0,"current":0,"output":false,"pf":0,"source":"UI"}}}    
-
-    # releen nappia painettiin, tilaksi tuli "on"
-    #shelly1/events/rpc {"src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","method":"NotifyStatus","params":{"ts":1675931140.21,"switch:0":{"id":0,"output":true,"source":"UI"}}}
-
-    # statistiikka
-    # shelly1/events/rpc {"src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","method":"NotifyStatus","params":{"ts":1675935540.54,"switch:3":{"id":3,"aenergy":{"by_minute":[0.000,0.000,0.000],"minute_ts":1675935539,"total":0.000}}}}
 
     if not (eldata.get('id') is None):
         if (eldata['id'] == 'relay'):
@@ -98,8 +87,6 @@ def processData(eldata):
                         relays[i].ts = int(energy['minute_ts'])
 
                 i = i + 1    
-            for obj in relays:
-                print(obj.index, obj.state, obj.ts, obj.energy, sep='-')    
 
 
 def on_message(client, userdata, message):

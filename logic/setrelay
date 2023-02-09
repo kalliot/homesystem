@@ -19,23 +19,22 @@ currentconsumption = int(20000 / wattsPerTick) # 20kW
 avgconsumption = currentconsumption
 relaystate = False
 relayinstance = 2                              # which relay is in use 0..3
+shellynumber = 1
 pricelimit = 12                                # in cents
 consumptionlimit = int(2000 / wattsPerTick)    # put relay on in in this consumption
 loadincrement = int(1800 / wattsPerTick)       # load controlled by relay is about 1800W
                                                # if load is on and consumption is over consumptionlimit + loadincrement
                                                # then put relay off
 def setRelay(state):
+    global relayinstance, shellynumber
+    
     relaymsg = {
-        'id': 20,
-        'src':'home/kallio/relayreply',
-        'method':'Switch.Set',
-        'params': {
-                'id':relayinstance,
-                'on':state
-            }
+        'id': 'relay',
+        'contact': relayinstance,
+        'state': state
     }
     time.sleep(1)  # send consecutive relay orders with 1 sec delay
-    setrelaytopic="shelly1/rpc"
+    setrelaytopic="home/kallio/relay/shelly" + str(shellynumber) + "/setstate"
     client.publish(setrelaytopic,json.dumps(relaymsg))
     print(json.dumps(relaymsg))
     
@@ -70,20 +69,8 @@ def processData(eldata):
             currentconsumption = int(eldata['value'])
             avgconsumption = int(eldata['avg1min'])
 
-
-    # {"src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","method":"NotifyStatus","params":
-    # {"ts":1675072985.86,"switch:1":{"id":1,"apower":0,"current":0,"output":false,"pf":0,"source":"UI"}}}    
-    else:
-        if not (eldata.get('method') is None):
-            method = eldata['method']
-            if method == 'NotifyStatus':
-                params = eldata['params']
-                swname = 'switch:' + str(relayinstance)
-                if not (params.get(swname) is None):
-                    relaydata =  params[swname]
-                    if not (relaydata.get('output') is None):
-                        relaystate = relaydata['output']
-
+        if id == "relay":
+            relaystate = eldata['state']
 
     if currentprice < pricelimit:  
         # using avgconsumption, to put relay on more carelessly
@@ -147,7 +134,7 @@ print("price=", currentprice, "consumption=", currentconsumption, "state=", rela
 
 topics = [("home/kallio/elprice/current",0),
           ("home/kallio/+/parameters/count",0),
-          ("shelly1/events/rpc",0),
+          ("home/kallio/relay/" +str(relayinstance) + "/shelly" + str(shellynumber) + "/state", 0),
           ("home/kallio/heating/setup",0)]
 
 setRelay(False)

@@ -16,6 +16,8 @@ from influx_credentials import *
 
 
 def saveData(recData):
+    storage = "forever"
+
     client = influxdb_client.InfluxDBClient(
         url=influx_credentials.url,
         token=influx_credentials.token,
@@ -23,12 +25,12 @@ def saveData(recData):
     )
 
     ts = int(recData['ts'])
-    cents = int(float(recData['price'])*100)
-    print(datetime.now(),msgqueue.qsize(), ts, cents)
-    
+    cents = int(recData['price'])
+    print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), cents)
+
     write_api = client.write_api(write_options=SYNCHRONOUS)
     p = influxdb_client.Point("euros").tag("name","elprice").field("price", cents).time(1000 * ts,write_precision=WritePrecision.MS)
-    write_api.write(influx_credentials.bucket, org=influx_credentials.org, record=p)
+    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
 
 def on_message(client, userdata, message):
