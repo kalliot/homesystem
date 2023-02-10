@@ -18,6 +18,9 @@ class relay:
         self.ts = ts
         self.initdone = False
         self.energy = energy
+        self.voltage = 0
+        self.temperature = 0
+        self.current = 0
 
 #relays = []
 relays = [relay(0, False, 0, 0.0),
@@ -25,7 +28,24 @@ relays = [relay(0, False, 0, 0.0),
           relay(2, False, 0, 0.0),
           relay(3, False, 0, 0.0)]
 
+# mosquitto_pub -h 192.168.101.231 -t 'shelly1/rpc' -m '{ "id":"status", "src": "shelly2/events","method":"Switch.GetStatus","params": { "id": 0 }}'
+def queryStatus(num):
+    global shellynumber
+    relaymsg = {
+        'id': 'status',
+        'src': 'shelly' + str(shellynumber) + '/events',
+        'method' : 'Switch.GetStatus',
+        'params': {
+                'id':num
+            }
+    }
+    setrelaytopic="shelly" +str(shellynumber) +"/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+
+
+
 def publishRelay(num, state):
+    global shellynumber
     relaymsg = {
         'id': 'relay',
         'device' : 'shelly' + str(shellynumber),
@@ -62,6 +82,22 @@ def processData(eldata):
                 relays[contact].initdone = True
                 setRelay(contact, newstate)
 
+     #{"id":"status","src":"shellypro4pm-30c6f784e78c","dst":"shelly1/events","result":{
+     #  "id":0, "source":"UI", "output":true, "apower":0.0, "voltage":237.1, "current":0.000, "pf":0.00, "aenergy":{
+     #      "total":0.000,"by_minute":[0.000,0.000,0.000],"minute_ts":1676038428},"temperature":{
+     #            "tC":44.2, "tF":111.6}}}
+
+        if (eldata['id'] == 'status'):
+            result = eldata['result']
+            index = int(result['id'])
+            relays[index].state = result['output']
+            relays[index].voltage = float(result['voltage'])
+            relays[index].current = float(result['current'])
+            temperatures = result['temperature']
+            relays[index].temperature = float(temperatures['tC'])
+            print(datetime.now(),"relay",index,"state",result['output'], "volt", relays[index].voltage, "temp",relays[index].temperature, "amps",relays[index].current)
+            publishRelay(index, result['output'])
+
     if not (eldata.get('method') is None):
         method = eldata['method']
         if method == 'NotifyStatus':
@@ -75,7 +111,7 @@ def processData(eldata):
                     if not (relaydata.get('output') is None):
                         state = relaydata['output']
                         if state != relays[i].state or relays[i].initdone == False:
-                            print(i,"changed")
+                            print(datetime.now(),i,"changed")
                             relays[i].initdone = True
                             relays[i].index = i
                             relays[i].state = state
@@ -85,7 +121,6 @@ def processData(eldata):
                         energy = relaydata['aenergy']      
                         relays[i].energy = float(energy['total'])
                         relays[i].ts = int(energy['minute_ts'])
-
                 i = i + 1    
 
 
@@ -98,7 +133,7 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print("connection failed, rc=",rc)            
+        print(datetime.now(),"connection failed, rc=",rc)
         connected = False
 
 def on_disconnect(client, userdata, rc):
@@ -125,6 +160,11 @@ client.loop_start()
 topics = [("home/kallio/relay/shelly" + str(shellynumber) + "/setstate",0),
           ("shelly1/events/rpc",0)]
 client.subscribe(topics)
+
+queryStatus(0)
+queryStatus(1)
+queryStatus(2)
+queryStatus(3)
 
 while True:
     try:
