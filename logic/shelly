@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from datetime import datetime
+import time
 import json
 import paho.mqtt.client as mqtt 
 from queue import Queue
@@ -44,13 +45,14 @@ def queryStatus(num):
 
 
 
-def publishRelay(num, state):
+def publishRelay(num):
     global shellynumber
     relaymsg = {
         'id': 'relay',
         'device' : 'shelly' + str(shellynumber),
         'contact': num,
-        'state': state
+        'state': relays[num].state,
+        'ts': relays[num].ts
     }
     setrelaytopic="home/kallio/relay/" +str(num) +"/shelly"+ str(shellynumber) + "/state"
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
@@ -90,13 +92,15 @@ def processData(eldata):
         if (eldata['id'] == 'status'):
             result = eldata['result']
             index = int(result['id'])
+            if relays[index].ts == 0:
+                relays[index].ts = int(time.time())
             relays[index].state = result['output']
             relays[index].voltage = float(result['voltage'])
             relays[index].current = float(result['current'])
             temperatures = result['temperature']
             relays[index].temperature = float(temperatures['tC'])
             print(datetime.now(),"relay",index,"state",result['output'], "volt", relays[index].voltage, "temp",relays[index].temperature, "amps",relays[index].current)
-            publishRelay(index, result['output'])
+            publishRelay(index)
 
     if not (eldata.get('method') is None):
         method = eldata['method']
@@ -116,7 +120,7 @@ def processData(eldata):
                             relays[i].index = i
                             relays[i].state = state
                             relays[i].ts = ts
-                            publishRelay(i, state)    
+                            publishRelay(i)
                     if not (relaydata.get('aenergy') is None):   
                         energy = relaydata['aenergy']      
                         relays[i].energy = float(energy['total'])
