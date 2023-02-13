@@ -4,32 +4,33 @@ from datetime import datetime
 import time
 import json
 import paho.mqtt.client as mqtt 
-from queue import Queue
+from queue import Queue, Empty
 import sys
 
 sys.path.insert(1, '../config')
 from influx_credentials import *
 
 shellynumber = 1
+statsInterval = 300
 
 class relay:
-    def __init__(self, index, state, ts, energy):
+    def __init__(self, index):
         self.index = index
-        self.state = state
-        self.ts = ts
+        self.state = False
+        self.ts = 0
         self.initdone = False
-        self.energy = energy
+        self.energy = 0.0
         self.voltage = 0
         self.temperature = 0
         self.current = 0
+        self.count = 0
 
-#relays = []
-relays = [relay(0, False, 0, 0.0),
-          relay(1, False, 0, 0.0),
-          relay(2, False, 0, 0.0),
-          relay(3, False, 0, 0.0)]
+relays = [relay(0),
+          relay(1),
+          relay(2),
+          relay(3)]
 
-# mosquitto_pub -h 192.168.101.231 -t 'shelly1/rpc' -m '{ "id":"status", "src": "shelly2/events","method":"Switch.GetStatus","params": { "id": 0 }}'
+
 def queryStatus(num):
     global shellynumber
     relaymsg = {
@@ -44,17 +45,42 @@ def queryStatus(num):
     client.publish(setrelaytopic,json.dumps(relaymsg))
 
 
+def publishStats():
+    global shellynumber
 
-def publishRelay(num):
+    stats = []
+    for rel in relays:
+        stats.append(
+            {
+                'relay':   rel.index,
+                'energy' : rel.energy,
+                'voltage': rel.voltage,
+                'temperature': rel.temperature,
+                'current': rel.current,
+                'count': rel.count
+            })
+
+    relaymsg = {
+        'id': 'statistics',
+        'device' : 'shelly' + str(shellynumber),
+        'ts': int(time.time()),
+        'relays': stats
+    }
+    statisticstopic="home/kallio/shelly"+ str(shellynumber) + "/statistics"
+    client.publish(statisticstopic,json.dumps(relaymsg),qos=0, retain=True)
+
+
+def publishRelay(rel):
     global shellynumber
     relaymsg = {
         'id': 'relay',
         'device' : 'shelly' + str(shellynumber),
-        'contact': num,
-        'state': relays[num].state,
-        'ts': relays[num].ts
+        'contact': rel.index,
+        'state': rel.state,
+        'ts': rel.ts
     }
-    setrelaytopic="home/kallio/relay/" +str(num) +"/shelly"+ str(shellynumber) + "/state"
+    rel.count += 1
+    setrelaytopic="home/kallio/relay/" +str(rel.index) +"/shelly"+ str(shellynumber) + "/state"
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
 
 def setRelay(num, state):
@@ -78,6 +104,7 @@ def processData(eldata):
 
     if not (eldata.get('id') is None):
         if (eldata['id'] == 'relay'):
+            # actual relay contact needs to be changed
             contact = eldata['contact']
             newstate = eldata['state']
             if relays[contact].state != newstate or relays[contact].initdone == False:
@@ -90,6 +117,7 @@ def processData(eldata):
      #            "tC":44.2, "tF":111.6}}}
 
         if (eldata['id'] == 'status'):
+            # shelly replied for queryStatus
             result = eldata['result']
             index = int(result['id'])
             if relays[index].ts == 0:
@@ -100,32 +128,31 @@ def processData(eldata):
             temperatures = result['temperature']
             relays[index].temperature = float(temperatures['tC'])
             print(datetime.now(),"relay",index,"state",result['output'], "volt", relays[index].voltage, "temp",relays[index].temperature, "amps",relays[index].current)
-            publishRelay(index)
+
 
     if not (eldata.get('method') is None):
         method = eldata['method']
         if method == 'NotifyStatus':
+            # somebody changed relay status with shelly buttons
             params = eldata['params']
             ts = int(params['ts'])
-            i=0
-            while i < 4:
-                swname = 'switch:' + str(i)
+            
+            for rel in relays:
+                swname = 'switch:' + str(rel.index)
                 if not (params.get(swname) is None):
                     relaydata =  params[swname]
                     if not (relaydata.get('output') is None):
                         state = relaydata['output']
-                        if state != relays[i].state or relays[i].initdone == False:
-                            print(datetime.now(),i,"changed")
-                            relays[i].initdone = True
-                            relays[i].index = i
-                            relays[i].state = state
-                            relays[i].ts = ts
-                            publishRelay(i)
-                    if not (relaydata.get('aenergy') is None):   
-                        energy = relaydata['aenergy']      
-                        relays[i].energy = float(energy['total'])
-                        relays[i].ts = int(energy['minute_ts'])
-                i = i + 1    
+                        if state != rel.state or rel.initdone == False:
+                            print(datetime.now(),rel.index,"changed")
+                            rel.initdone = True
+                            rel.state = state
+                            rel.ts = ts
+                            publishRelay(rel)
+                    if not (relaydata.get('aenergy') is None):
+                        energy = relaydata['aenergy']
+                        rel.energy = float(energy['total'])
+                        rel.ts = int(energy['minute_ts'])
 
 
 def on_message(client, userdata, message):
@@ -165,19 +192,37 @@ topics = [("home/kallio/relay/shelly" + str(shellynumber) + "/setstate",0),
           ("shelly1/events/rpc",0)]
 client.subscribe(topics)
 
-queryStatus(0)
-queryStatus(1)
-queryStatus(2)
-queryStatus(3)
+waitTime=5 # first statistics after 5 sec
+prevStatisticsTS = 0
 
 while True:
+    now = int(time.time())
+    if now - prevStatisticsTS > statsInterval:
+        prevStatisticsTS = now
+        publishStats()
+        for rel in relays:
+            queryStatus(rel.index)
+
     try:
-        data = msgqueue.get(block=True)
+        data = msgqueue.get(block=True, timeout=waitTime)
         if data is None:
             continue
-        processData(json.loads(data))
+        msg = json.loads(data)
+        processData(msg)
+
+    except Empty:
+        publishStats()  # contents are what was in previous queryStatus
+        for rel in relays:
+            queryStatus(rel.index) # querying again, results are shown later.
+        waitTime = statsInterval
+
     except KeyboardInterrupt:
         client.disconnect()
         exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
     except:
         raise        
