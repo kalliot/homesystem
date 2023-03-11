@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+
+from gpiozero import CPUTemperature
+import psutil
+import os
+import sys
+import json
+import time
+import paho.mqtt.publish as publish
+
+sys.path.insert(1, '/home/pi/config')
+from influx_credentials import mqtt_broker
+
+def getserial():
+  cpuserial = "0000000000000000"
+  try:
+    line = open('/sys/firmware/devicetree/base/serial-number','r').readlines()
+    cpuserial = line[0]
+    cpuserial = cpuserial.rstrip(cpuserial[-1])
+  except:
+    cpuserial = "ERROR000000000"
+ 
+  return cpuserial
+
+cpu = CPUTemperature()
+load1, load5, load15 = psutil.getloadavg()
+usage1 = round(100 * (load1 / os.cpu_count()), 2)
+usage5 = round(100 * (load5 / os.cpu_count()), 2)
+usage15 = round(100 * (load15 / os.cpu_count()), 2)
+
+serialnumber = getserial()
+ts = int(time.time())
+
+jsonRec = {
+   "id"  :  "health",
+   "dev" :  serialnumber,
+   "ts"  :  ts,
+   "temperature" : int(cpu.temperature),
+   "load1" : usage1,
+   "load5" : usage5,
+   "load15": usage15
+}
+
+
+publish.single("home/kallio/"+serialnumber+"/health", json.dumps(jsonRec), hostname=mqtt_broker.address, retain=True)
+print("temp was", cpu.temperature)
