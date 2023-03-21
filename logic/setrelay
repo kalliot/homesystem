@@ -27,7 +27,7 @@ loadincrement = int(1800 / wattsPerTick)       # load controlled by relay is abo
                                                # then put relay off
 def setRelay(state):
     global relayinstance, shellynumber
-    
+
     relaymsg = {
         'id': 'relay',
         'contact': relayinstance,
@@ -36,7 +36,6 @@ def setRelay(state):
     time.sleep(1)  # send consecutive relay orders with 1 sec delay
     setrelaytopic="home/kallio/relay/shelly" + str(shellynumber) + "/setstate"
     client.publish(setrelaytopic,json.dumps(relaymsg))
-    print(json.dumps(relaymsg))
     
 
 
@@ -54,18 +53,18 @@ def processData(eldata):
         if id == 'elprice':
             current_date = datetime.utcnow().strftime("%Y%m%d%H") 
             if (current_date != eldata['day']):
-                print("current price is not valid")
+                print(datetime.utcnow(),"current price is not valid")
             else:
                 currentprice=int(eldata['price'])
         
         if id == 'heatsetup':
-            print("got heatsetup")
+            print(datetime.utcnow(),"got heatsetup")
             consumptionlimit = int(eldata['consumptionlimit'] / wattsPerTick)
             loadincrement = int(eldata['heaterpower'] / wattsPerTick)
             pricelimit = int(eldata['pricelimit'])
 
         # second, check current consumption
-        if id[0:5] == 'pulse':
+        if id == 'counter':
             currentconsumption = int(eldata['value'])
             avgconsumption = int(eldata['avg1min'])
 
@@ -107,7 +106,7 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print("connection failed, rc=",rc)            
+        print(datetime.utcnow(),"connection failed, rc=",rc)
         connected = False
 
 def on_disconnect(client, userdata, rc):
@@ -130,10 +129,8 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-print("price=", currentprice, "consumption=", currentconsumption, "state=", relaystate)
-
 topics = [("home/kallio/elprice/current",0),
-          ("home/kallio/+/parameters/count",0),
+          ("home/kallio/esp277998/parameters/counter/26",0),
           ("home/kallio/relay/" +str(relayinstance) + "/shelly" + str(shellynumber) + "/state", 0),
           ("home/kallio/heating/setup",0)]
 
@@ -149,5 +146,8 @@ while True:
     except KeyboardInterrupt:
         client.disconnect()
         exit(0)
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
     except:
         raise        

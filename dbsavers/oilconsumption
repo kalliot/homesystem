@@ -1,0 +1,109 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+from datetime import timezone
+import paho.mqtt.client as mqtt 
+import os
+import influxdb_client
+import json
+import sys
+import RPi.GPIO as GPIO
+from queue import Queue
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+sys.path.insert(1, '/home/pi/config')
+from influx_credentials import *
+
+# 2.27124707 liters per hour
+# 2271.24707 milliliters
+# 2271.24707 / 3600 = 0.63090196 = Milliliters per second.
+mLitersPerSec = 0.63090196
+
+def saveData(myData):
+
+    dbclient = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+    write_api = dbclient.write_api(write_options=SYNCHRONOUS)
+    now = int(datetime.now(timezone.utc).timestamp())
+
+    state = int(myData['value'])
+    datats = int(myData['ts'])
+    closems = 1000 * (datats -1)
+
+    if state == 0:
+        len = int(myData['len'])
+        liters = round(float(mLitersPerSec * len / 1000), 5)
+        p = influxdb_client.Point("liters").tag("name", "heatoil").field("consumed", liters).time(1000 * datats,write_precision=WritePrecision.MS)
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        
+        closets = 1000 * (datats -1)
+        p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(closems,write_precision=WritePrecision.MS)
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(1000 * datats,write_precision=WritePrecision.MS)
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        print(datetime.now(), "state:", state, "liters:", liters,  "delay:",now - myData['ts'])
+    else:
+        p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(closems,write_precision=WritePrecision.MS)
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(1000 * datats,write_precision=WritePrecision.MS)
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        print(datetime.now(), "state:", state, "delay:",now - datats)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("home/kallio/esp5bc674/parameters/state/33")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+led = 13
+GPIO.setwarnings(False) 
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
+
+msgqueue = Queue(maxsize=4)    
+pid = os.getpid()
+
+client = mqtt.Client("influx_oil_saver:" + str(pid)) #create new instance
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        GPIO.output(led, GPIO.LOW)
+        saveData(json.loads(data))
+        sys.stdout.flush()
+        GPIO.output(led, GPIO.HIGH)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        GPIO.output(led, GPIO.HIGH)
+        exit(0)
+
+    except:
+        raise        

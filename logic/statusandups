@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+
+from gpiozero import CPUTemperature
+import psutil
+import os
+from sys import path
+import json
+import time
+import paho.mqtt.publish as publish
+import smbus2
+from ina219 import INA219, DeviceRangeError
+
+
+DEVICE_BUS = 1
+DEVICE_ADDR = 0x17
+PROTECT_VOLT = 3700
+
+
+
+path.insert(1, '/home/pi/config')
+from influx_credentials import mqtt_broker
+
+def getserial():
+  cpuserial = "0000000000000000"
+  try:
+    line = open('/sys/firmware/devicetree/base/serial-number','r').readlines()
+    cpuserial = line[0]
+    cpuserial = cpuserial.rstrip(cpuserial[-1])
+  except:
+    cpuserial = "ERROR000000000"
+ 
+  return cpuserial
+
+def getPiState(sernum):
+  cpu = CPUTemperature()
+  load1, load5, load15 = psutil.getloadavg()
+  usage1 = round(100 * (load1 / os.cpu_count()), 2)
+  usage5 = round(100 * (load5 / os.cpu_count()), 2)
+  usage15 = round(100 * (load15 / os.cpu_count()), 2)
+
+  ts = int(time.time())
+
+  jsonRec = {
+    "id"  :  "health",
+    "dev" :  sernum,
+    "ts"  :  ts,
+    "temperature" : int(cpu.temperature),
+    "load1" : usage1,
+    "load5" : usage5,
+    "load15": usage15
+  }
+  publish.single("home/kallio/"+sernum+"/health", json.dumps(jsonRec), hostname=mqtt_broker.address, retain=True)
+
+
+def getUpsState(sernum):
+  ina_supply = INA219(0.00725, busnum=DEVICE_BUS, address=0x40)
+  ina_supply.configure()
+  supply_voltage = ina_supply.voltage()
+  supply_current = ina_supply.current()
+
+  ina_batt = INA219(0.005, busnum=DEVICE_BUS, address=0x45)
+  ina_batt.configure()
+  batt_voltage = ina_batt.voltage()
+  batt_current = ina_batt.current()
+
+  try:
+      batt_amps = batt_current
+  except DeviceRangeError:
+      batt_amps = 16000
+  bus = smbus2.SMBus(DEVICE_BUS)
+  aReceiveBuf = []
+  aReceiveBuf.append(0x00) 
+
+  for i in range(1,255):
+      aReceiveBuf.append(bus.read_byte_data(DEVICE_ADDR, i))
+
+  ts = int(time.time())
+  
+  jsonRec = {
+      "id"  :  "battery",
+      "dev" :  sernum,
+      "ts"  :  ts,
+      "PiVccVolt" : supply_voltage,
+      "PiIddAmps" : supply_current,
+      "BatVccVolt" : batt_voltage,
+      "BatIddAmps": batt_amps,
+      "McuVccVolt" : aReceiveBuf[2] << 8 | aReceiveBuf[1],
+      "BatPinCVolt'" : aReceiveBuf[6] << 8 | aReceiveBuf[5],
+      "ChargeTypeCVolt" : aReceiveBuf[8] << 8 | aReceiveBuf[7],
+      "ChargeMicroVolt" : aReceiveBuf[10] << 8 | aReceiveBuf[9],
+      "BatTemperature" : aReceiveBuf[12] << 8 | aReceiveBuf[11],
+      "BatFullVolt" : aReceiveBuf[14] << 8 | aReceiveBuf[13],
+      "BatEmptyVolt" : aReceiveBuf[16] << 8 | aReceiveBuf[15],
+      "BatProtectVolt" : aReceiveBuf[18] << 8 | aReceiveBuf[17],
+      "SampleTime" : aReceiveBuf[22] << 8 | aReceiveBuf[21],
+      "AutoPowerOn" : aReceiveBuf[25],
+      "OnlineTime" : aReceiveBuf[31] << 24 | aReceiveBuf[30] << 16 | aReceiveBuf[29] << 8 | aReceiveBuf[28],
+      "FullTime" : aReceiveBuf[35] << 24 | aReceiveBuf[34] << 16 | aReceiveBuf[33] << 8 | aReceiveBuf[32],
+      "OneshotTime" : aReceiveBuf[39] << 24 | aReceiveBuf[38] << 16 | aReceiveBuf[37] << 8 | aReceiveBuf[36],
+      "Version" : aReceiveBuf[41] << 8 | aReceiveBuf[40]
+  }
+  publish.single("home/kallio/"+sernum+"/battery", json.dumps(jsonRec), hostname=mqtt_broker.address, retain=True)
+
+
+serialnumber = getserial()
+getPiState(serialnumber)
+getUpsState(serialnumber)
+  

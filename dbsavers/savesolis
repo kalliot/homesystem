@@ -1,0 +1,108 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import json
+import sys
+import os
+import RPi.GPIO as GPIO
+import paho.mqtt.client as mqtt 
+from queue import Queue
+
+import influxdb_client
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+sys.path.insert(1, '/home/pi/config')
+from influx_credentials import *
+
+
+def saveData(myData):
+    bucket = "forever"
+
+    client = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+ 
+
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+
+    ts = int(myData['ts']) 
+    string1 = myData['string1']
+    string2 = myData['string2']
+
+    p = influxdb_client.Point("power").tag("name","solis").field("string1", string1['power']).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    p = influxdb_client.Point("power").tag("name","solis").field("string2", string2['power']).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    p = influxdb_client.Point("power").tag("name","solis").field("total", myData['acpower'] * 1000).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    p = influxdb_client.Point("current").tag("name","solis").field("string1", float(string1['current'])).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p = influxdb_client.Point("current").tag("name","solis").field("string2", float(string2['current'])).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    p = influxdb_client.Point("voltage").tag("name","solis").field("string1", float(string1['voltage'])).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p = influxdb_client.Point("voltage").tag("name","solis").field("string2", float(string2['voltage'])).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    p = influxdb_client.Point("temperature").tag("name","solis").field("igbt", myData['inverter_temp']).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+
+    print(datetime.now(), "Saved")
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("home/kallio/solarpower")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+
+led = 13
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
+
+msgqueue = Queue(maxsize=5)    
+pid = os.getpid()
+
+client = mqtt.Client("influx_inverter_saver:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        GPIO.output(led, GPIO.LOW)
+        saveData(json.loads(data))
+        sys.stdout.flush()
+        GPIO.output(led, GPIO.HIGH)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        GPIO.cleanup()
+        exit(0)
+
+    except:
+        raise        
+

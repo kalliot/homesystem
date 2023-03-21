@@ -8,21 +8,18 @@ import os
 import influxdb_client
 import json
 import sys
+import RPi.GPIO as GPIO
 from queue import Queue
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from influx_credentials import *
 
 
-wattsPerTick = 33
+wattsPerTick = 36
 
 def saveData(myData):
-
-    if (myData['id'] != 'pulse277998'):
-        print("publisher id is wrong, nothing done. ",myData['id'])
-        return
 
     dbclient = influxdb_client.InfluxDBClient(
         url=influx_credentials.url,
@@ -34,7 +31,7 @@ def saveData(myData):
     value = int(myData['value'])
     watts = wattsPerTick * value;
     p = influxdb_client.Point("watts").tag("name", "electricity").field("consumed", watts).time(1000 * myData['ts'],write_precision=WritePrecision.MS)
-    write_api.write(bucket=influx_credentials.bucket, org=influx_credentials.org, record=p)
+    write_api.write(bucket="weekly", org=influx_credentials.org, record=p)
        
     now = int(datetime.now(timezone.utc).timestamp())
     print(datetime.now(), "count=", value, ":", watts, "W delay:",now - myData['ts'])
@@ -50,7 +47,7 @@ def logger(client, userdata, level, buff):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/+/parameters/count")
+        client.subscribe("home/kallio/esp277998/parameters/counter/26")
         connected = True
     else:
         print("connection failed, rc=",rc)            
@@ -58,6 +55,10 @@ def on_connect(client, userdata, flags, rc):
 
 def on_disconnect(client, userdata, rc):
     client.reconnect()
+
+led = 13
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
 
 msgqueue = Queue(maxsize=4)    
 pid = os.getpid()
@@ -75,5 +76,7 @@ while (True):
     data = msgqueue.get(block=True)
     if data is None:
         continue
+    GPIO.output(led, GPIO.LOW)
     saveData(json.loads(data))
     sys.stdout.flush()
+    GPIO.output(led, GPIO.HIGH)
