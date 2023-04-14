@@ -4,6 +4,7 @@ from datetime import datetime
 from datetime import timezone
 import paho.mqtt.client as mqtt 
 import os
+from time import sleep
 import influxdb_client
 import json
 import sys
@@ -19,6 +20,56 @@ from influx_credentials import *
 # 2271.24707 milliliters
 # 2271.24707 / 3600 = 0.63090196 = Milliliters per second.
 mLitersPerSec = 0.63090196
+boilerSensors = "esp5bc674"
+burnerGpio = "33"
+boilerTemp = "28b867746008f"
+waterTemp = "28e1747360083"
+
+def saveTemperature(write_api, data, ts):
+    temperature = float(data['value'])
+    datats = int(data['ts'])
+    text = ""
+
+    if data['sensor'] == boilerTemp:
+        p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        text = "boilerTemp"
+    if data['sensor'] == waterTemp:
+        p = influxdb_client.Point("boiler").tag("name", "temperatures").field("hotWaterTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        text = "hotWater"
+    write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+    print(datetime.now(), text + "temperature:", temperature, "delay:",ts - datats)
+
+
+def saveState(write_api, data, ts):
+    state = int(data['value'])
+    datats = int(data['ts'])
+    duration = int(data['duration'])
+    closems = 1000 * (datats -1)
+
+    if state == 0:
+        if duration > 0:
+            liters = round(float(mLitersPerSec * duration / 1000), 5)
+            p = influxdb_client.Point("liters").tag("name", "heatoil").field("consumed", liters).time(1000 * datats,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+            
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(closems,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(1000 * datats,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+            print(datetime.now(), "state:", state, "liters:", liters,  "delay:",ts - data['ts'])
+
+    else:
+        if duration > 0:
+            p = influxdb_client.Point("liters").tag("name", "idle").field("seconds", duration).time(1000 * datats,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(closems,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(1000 * datats,write_precision=WritePrecision.MS)
+            write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+            print(datetime.now(), "state:", state, "delay:",ts - datats)
+
+
 
 def saveData(myData):
 
@@ -29,29 +80,14 @@ def saveData(myData):
     )
     write_api = dbclient.write_api(write_options=SYNCHRONOUS)
     now = int(datetime.now(timezone.utc).timestamp())
+    id = myData['id']
 
-    state = int(myData['value'])
-    datats = int(myData['ts'])
-    closems = 1000 * (datats -1)
+    if id == "state":
+        saveState(write_api, myData, now)
+        return
 
-    if state == 0:
-        len = int(myData['len'])
-        liters = round(float(mLitersPerSec * len / 1000), 5)
-        p = influxdb_client.Point("liters").tag("name", "heatoil").field("consumed", liters).time(1000 * datats,write_precision=WritePrecision.MS)
-        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        
-        closets = 1000 * (datats -1)
-        p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(closems,write_precision=WritePrecision.MS)
-        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(1000 * datats,write_precision=WritePrecision.MS)
-        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        print(datetime.now(), "state:", state, "liters:", liters,  "delay:",now - myData['ts'])
-    else:
-        p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(closems,write_precision=WritePrecision.MS)
-        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(1000 * datats,write_precision=WritePrecision.MS)
-        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        print(datetime.now(), "state:", state, "delay:",now - datats)
+    if id == "temperature":
+        saveTemperature(write_api, myData, now)
 
 
 def on_message(client, userdata, message):
@@ -64,14 +100,19 @@ def logger(client, userdata, level, buff):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/esp5bc674/parameters/state/33")
+        topic = "home/kallio/" + boilerSensors + "/parameters/#"
+        print("topic = ", topic)
+        client.subscribe(topic)
         connected = True
     else:
         print("connection failed, rc=",rc)            
         connected = False
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    if rc != 7:
+        client.reconnect()
+    else:
+        sleep(30)
 
 led = 13
 GPIO.setwarnings(False) 

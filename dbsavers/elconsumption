@@ -54,9 +54,14 @@ def on_connect(client, userdata, flags, rc):
         connected = False
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    if rc!=7:
+        client.reconnect()
+    else:
+        time.sleep(30)          
+ 
 
 led = 13
+GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(led, GPIO.OUT)
 
@@ -73,10 +78,19 @@ client.loop_start()
 
 
 while (True):
-    data = msgqueue.get(block=True)
-    if data is None:
-        continue
-    GPIO.output(led, GPIO.LOW)
-    saveData(json.loads(data))
-    sys.stdout.flush()
-    GPIO.output(led, GPIO.HIGH)
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        GPIO.output(led, GPIO.LOW)
+        saveData(json.loads(data))
+        sys.stdout.flush()
+        GPIO.output(led, GPIO.HIGH)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except:
+        raise

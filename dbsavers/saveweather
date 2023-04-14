@@ -3,16 +3,18 @@
 from datetime import datetime
 import paho.mqtt.client as mqtt 
 import os
+import time
 import influxdb_client
 import json
 import sys
+import RPi.GPIO as GPIO
 from queue import Queue
 
 import influxdb_client
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from influx_credentials import *
 
 
@@ -59,7 +61,16 @@ def on_connect(client, userdata, flags, rc):
         connected = False
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    if rc!=7:
+        client.reconnect()
+    else:
+        time.sleep(30)
+
+
+led = 13
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
 
 msgqueue = Queue(maxsize=25)    
 pid = os.getpid()
@@ -77,12 +88,15 @@ while (True):
         data = msgqueue.get(block=True)
         if data is None:
             continue
+        GPIO.output(led, GPIO.LOW)
         saveData(json.loads(data))
         sys.stdout.flush()
+        GPIO.output(led, GPIO.HIGH)
 
     except KeyboardInterrupt:
         client.disconnect()
+        client.loop_stop()
         exit(0)
 
     except:
-        raise        
+        raise
