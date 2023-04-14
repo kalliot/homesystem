@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import json
-import os
 import time
 from datetime import datetime
 from queue import Queue
@@ -63,7 +62,10 @@ def sendData(data):
 
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    if rc!=7:
+        client.reconnect()
+    else:
+        time.sleep(30)
 
 
 GPIO.add_event_detect(button, GPIO.BOTH, callback=my_callback)
@@ -92,5 +94,5 @@ while True:
         exit(0)
 
     except:
-        raise        
+        raise
 

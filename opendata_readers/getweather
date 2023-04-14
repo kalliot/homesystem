@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 import os
 import sys
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from influx_credentials import *
 
 
