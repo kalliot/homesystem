@@ -1,0 +1,5 @@
+bosch/
+config/influx_credentials.py
+config/conf.py
+config/__pycache__
+config/setup.py
