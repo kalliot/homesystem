@@ -9,7 +9,7 @@ import paho.mqtt.client as mqtt
 import RPi.GPIO as GPIO
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import mqtt_broker
 
 
 button = 18
@@ -56,7 +56,7 @@ def sendData(data):
     global serialnumber
 
     msg = json.dumps(data)
-    topic = "home/kallio/"+serialnumber+"/button" 
+    topic = mqtt_broker.topic_prefix + serialnumber+"/button"
     print(datetime.now(), "Sending")
     client.publish(topic, msg, qos=0)
 
@@ -95,4 +95,3 @@ while True:
 
     except:
         raise
-

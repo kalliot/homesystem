@@ -10,11 +10,11 @@ import paho.mqtt.client as mqtt
 import sys
 
 sys.path.insert(1, '../config')
-from influx_credentials import *
+from setup import mqtt_broker
 
 
 def processData(eldata):
-    currentpricetopic = "home/kallio/elprice/current"
+    currentpricetopic = mqtt_broker.topic_prefix + "/elprice/current"
     client.publish(currentpricetopic, eldata, qos=0, retain=True)
 
 def on_message(client, userdata, message):
@@ -51,7 +51,7 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-topic = "home/kallio/elprice/" + hour
+topic = mqtt_broker.topic_prefix + "/elprice/" + hour
 client.subscribe(topic)
 
 time.sleep(1)
