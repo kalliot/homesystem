@@ -66,7 +66,7 @@ def publishStats():
         'ts': int(time.time()),
         'relays': stats
     }
-    statisticstopic= mqtt_broker.topic_prefix +"shelly"+ str(shellynumber) + "/statistics"
+    statisticstopic= mqtt_broker.topic_prefix +"/shelly"+ str(shellynumber) + "/statistics"
     client.publish(statisticstopic,json.dumps(relaymsg),qos=0, retain=True)
 
 
@@ -80,7 +80,7 @@ def publishRelay(rel):
         'ts': rel.ts
     }
     rel.count += 1
-    setrelaytopic = mqtt_broker.topic_prefix + "relay/" +str(rel.index) +"/shelly"+ str(shellynumber) + "/state"
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/" +str(rel.index) +"/shelly"+ str(shellynumber) + "/state"
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
 
 def setRelay(num, state):
@@ -88,7 +88,7 @@ def setRelay(num, state):
 
     relaymsg = {
         'id': 20,
-        'src': topics.prefix + 'relayreply',
+        'src': mqtt_broker.topic_prefix + '/relayreply',
         'method':'Switch.Set',
         'params': {
                 'id':num,
@@ -188,7 +188,7 @@ print(datetime.utcnow(), "Start")
 client.loop_start()
 
 
-topics = [(topics.prefix + "relay/shelly" + str(shellynumber) + "/setstate",0),
+topics = [(mqtt_broker.topic_prefix + "/relay/shelly" + str(shellynumber) + "/setstate",0),
           ("shelly1/events/rpc",0)]
 client.subscribe(topics)
 
