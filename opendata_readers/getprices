@@ -9,10 +9,11 @@ import requests
 import json
 import os
 import sys
+import pytz
 import paho.mqtt.client as mqtt 
 
 sys.path.insert(1, '../config')
-from influx_credentials import *
+from setup import nordpool, mqtt_broker
 
 
 def on_message(client, userdata, message):
@@ -76,14 +77,14 @@ for hour in x:
             break
 
         cents = int(float(hour['PriceWithTax'])*100)
-        strhour=datetime.fromtimestamp(ts).strftime("%H")
-        topic = "home/kallio/elprice/" + strhour
+        strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
+        topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
 
         send_msg = {
                 'id': 'elprice',
                 'hour': strhour,
                 'ts': ts,
-                'day': datetime.fromtimestamp(ts).strftime("%Y%m%d%H"),
+                'day': datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H"),
                 'price': cents
         }
 
