@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import time
+import json
+import paho.mqtt.client as mqtt 
+from queue import Queue, Empty
+import sys
+
+sys.path.insert(1, '/home/pi/config')
+from setup import mqtt_broker
+
+shellynumber = 2
+statsInterval = 300
+
+class relay:
+    def __init__(self, index):
+        self.index = index
+        self.state = False
+        self.ts = 0
+        self.initdone = False
+        self.temperature = 0
+        self.count = 0
+
+relays = [relay(0)]
+
+
+def queryStatus(num):
+    global shellynumber
+    relaymsg = {
+        'id': 'status',
+        'src': 'shelly' + str(shellynumber) + '/events',
+        'method' : 'Switch.GetStatus',
+        'params': {
+                'id':num
+            }
+    }
+    setrelaytopic="shelly" +str(shellynumber) +"/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+
+
+def publishStats():
+    global shellynumber
+
+    stats = []
+    for rel in relays:
+        stats.append(
+            {
+                'relay':   rel.index,
+                'temperature': rel.temperature,
+                'count': rel.count
+            })
+
+    relaymsg = {
+        'id': 'statistics',
+        'device' : 'shelly' + str(shellynumber),
+        'ts': int(time.time()),
+        'relays': stats
+    }
+    statisticstopic= mqtt_broker.topic_prefix +"/shelly"+ str(shellynumber) + "/statistics"
+    client.publish(statisticstopic,json.dumps(relaymsg),qos=0, retain=True)
+
+
+def publishRelay(rel):
+    global shellynumber
+    relaymsg = {
+        'id': 'relay',
+        'device' : 'shelly' + str(shellynumber),
+        'contact': rel.index,
+        'state': rel.state,
+        'ts': rel.ts
+    }
+    rel.count += 1
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/" +str(rel.index) +"/shelly"+ str(shellynumber) + "/state"
+    client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
+
+def setRelay(num, state):
+    global shellynumber
+
+    relaymsg = {
+        'id': 20,
+        'src': mqtt_broker.topic_prefix + '/relayreply',
+        'method':'Switch.Set',
+        'params': {
+                'id':num,
+                'on':state
+            }
+    }
+    setrelaytopic="shelly" + str(shellynumber) + "/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+
+
+def processData(eldata):
+    global relays
+
+    if not (eldata.get('id') is None):
+        print("found id")
+        if (eldata['id'] == 'relay'):
+            # actual relay contact needs to be changed
+            contact = eldata['contact']
+            newstate = eldata['state']
+            if relays[contact].state != newstate or relays[contact].initdone == False:
+                relays[contact].initdone = True
+                setRelay(contact, newstate)
+
+
+        if (eldata['id'] == 'status'):
+            print("checking status") 
+            # shelly replied for queryStatus
+            result = eldata['result']
+            index = int(result['id'])
+            if relays[index].ts == 0:
+                relays[index].ts = int(time.time())
+            relays[index].state = result['output']
+            temperatures = result['temperature']
+            relays[index].temperature = float(temperatures['tC'])
+            publishRelay(relays[index])
+            print(datetime.now(),"relay",index,"state",result['output'], "temp",relays[index].temperature)
+
+
+    if not (eldata.get('method') is None):
+        method = eldata['method']
+        if method == 'NotifyStatus':
+            # somebody changed relay status with shelly buttons
+            params = eldata['params']
+            ts = int(params['ts'])
+            
+            for rel in relays:
+                swname = 'switch:' + str(rel.index)
+                if not (params.get(swname) is None):
+                    relaydata =  params[swname]
+                    if not (relaydata.get('output') is None):
+                        state = relaydata['output']
+                        if state != rel.state or rel.initdone == False:
+                            print(datetime.now(),rel.index,"changed")
+                            rel.initdone = True
+                            rel.state = state
+                            rel.ts = ts
+                            publishRelay(rel)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print(datetime.now(),"connection failed, rc=",rc)
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client, userdata,result):
+    pass
+
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client("shelly" + str(shellynumber)) 
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+topics = [(mqtt_broker.topic_prefix + "/relay/shelly" + str(shellynumber) + "/setstate",0),
+          ("shelly" + str(shellynumber) + "/events/rpc",0)]
+client.subscribe(topics)
+
+waitTime=5 # first statistics after 5 sec
+prevStatisticsTS = 0
+
+while True:
+    now = int(time.time())
+    if now - prevStatisticsTS > statsInterval:
+        prevStatisticsTS = now
+        publishStats()
+        for rel in relays:
+            queryStatus(rel.index)
+
+    try:
+        data = msgqueue.get(block=True, timeout=waitTime)
+        if data is None:
+            continue
+        msg = json.loads(data)
+        processData(msg)
+
+    except Empty:
+        publishStats()  # contents are what was in previous queryStatus
+        for rel in relays:
+            queryStatus(rel.index) # querying again, results are shown later.
+        waitTime = statsInterval
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise        
