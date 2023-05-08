@@ -10,7 +10,7 @@ import sys
 sys.path.insert(1, '../config')
 from setup import * mqtt_broker
 
-shellynumber = 1
+shellyname = "shelly4"
 statsInterval = 300
 
 class relay:
@@ -32,21 +32,21 @@ relays = [relay(0),
 
 
 def queryStatus(num):
-    global shellynumber
+    global shellyname
     relaymsg = {
         'id': 'status',
-        'src': 'shelly' + str(shellynumber) + '/events',
+        'src': shellyname + '/events',
         'method' : 'Switch.GetStatus',
         'params': {
                 'id':num
             }
     }
-    setrelaytopic="shelly" +str(shellynumber) +"/rpc"
+    setrelaytopic=shellyname +"/rpc"
     client.publish(setrelaytopic,json.dumps(relaymsg))
 
 
 def publishStats():
-    global shellynumber
+    global shellyname
 
     stats = []
     for rel in relays:
@@ -62,29 +62,29 @@ def publishStats():
 
     relaymsg = {
         'id': 'statistics',
-        'device' : 'shelly' + str(shellynumber),
+        'device' : shellyname,
         'ts': int(time.time()),
         'relays': stats
     }
-    statisticstopic= mqtt_broker.topic_prefix +"/shelly"+ str(shellynumber) + "/statistics"
+    statisticstopic= mqtt_broker.topic_prefix +"/" +shellyname + "/statistics"
     client.publish(statisticstopic,json.dumps(relaymsg),qos=0, retain=True)
 
 
 def publishRelay(rel):
-    global shellynumber
+    global shellyname
     relaymsg = {
         'id': 'relay',
-        'device' : 'shelly' + str(shellynumber),
+        'device' : shellyname,
         'contact': rel.index,
         'state': rel.state,
         'ts': rel.ts
     }
     rel.count += 1
-    setrelaytopic = mqtt_broker.topic_prefix + "/relay/" +str(rel.index) +"/shelly"+ str(shellynumber) + "/state"
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/" +str(rel.index) + "/" +shellyname + "/state"
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=0, retain=True)
 
 def setRelay(num, state):
-    global shellynumber
+    global shellyname
 
     relaymsg = {
         'id': 20,
@@ -95,7 +95,7 @@ def setRelay(num, state):
                 'on':state
             }
     }
-    setrelaytopic="shelly" + str(shellynumber) + "/rpc"
+    setrelaytopic= shellyname + "/rpc"
     client.publish(setrelaytopic,json.dumps(relaymsg))
 
 
@@ -168,11 +168,17 @@ def on_disconnect(client, userdata, rc):
 def on_publish(client, userdata,result):
     pass
 
+if (len(sys.argv) < 2):
+    print("i need shellyname as parameter")
+    print("example: ", sys.argv[0], "boilerroom")
+    exit(1)
+else:
+    shellyname = sys.argv[1]
 
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client("shelly" + str(shellynumber)) 
+client = mqtt.Client(shellyname) 
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -183,8 +189,8 @@ print(datetime.utcnow(), "Start")
 client.loop_start()
 
 
-topics = [(mqtt_broker.topic_prefix + "/relay/shelly" + str(shellynumber) + "/setstate",0),
-          ("shelly" + str(shellynumber) + "/events/rpc",0)]
+topics = [(mqtt_broker.topic_prefix + "/relay/" + shellyname + "/setstate",0),
+          (shellyname + "/events/rpc",0)]
 client.subscribe(topics)
 
 waitTime=5 # first statistics after 5 sec
@@ -220,4 +226,4 @@ while True:
         print(datetime.utcnow(), data)
 
     except:
-        raise        
+        raise
