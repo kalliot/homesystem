@@ -15,7 +15,7 @@ from queue import Queue, Empty
 import paho.mqtt.client as mqtt 
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import *
 
 
 prevTimestamp=0
@@ -100,6 +100,7 @@ def publishData(recData):
     ret = False
     myData = recData['data']
     ts = int(myData['dataTimestamp']) 
+    serialno = myData['collectorsn']
     now = int(time.time()) * 1000
     diff = now - ts
     print(datetime.now(), "now=", now, "datats=", ts, "diff=",diff,"datadiff=", ts - prevTimestamp)
@@ -109,6 +110,7 @@ def publishData(recData):
 
         jsonRec = {
             "id"     :      "solarpower",
+            "dev"    :      serialno,
             "ts"     :      int(ts / 1000), 
             "string1": {
                 "power" :      myData['pow1'],
@@ -141,7 +143,7 @@ def publishData(recData):
             "acpower":      myData['pac'],
             "inverter_temp" : myData['inverterTemperature']
         }
-        topic = "home/kallio/solarpower"
+        topic = mqtt_broker.topic_prefix + "/" + serialno + "/solarpower"
         try:
             client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
         except:
@@ -166,7 +168,7 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.now(), "Start")
 client.loop_start()
 
-client.subscribe("home/kallio/celestials")
+client.subscribe(mqtt_broker.topic_prefix + "/celestials")
 
 
 waitTime = 3 # wait enough to get celestials first

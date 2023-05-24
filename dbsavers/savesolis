@@ -14,16 +14,16 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import mqtt_broker, influx_credentials
 
 
 def saveData(myData):
     bucket = "forever"
 
     client = influxdb_client.InfluxDBClient(
-        url=influx_credentials.url,
-        token=influx_credentials.token,
-        org=influx_credentials.org
+        url   = influx.url,
+        token = influx.token,
+        org   = influx.org
     )
  
 
@@ -32,27 +32,34 @@ def saveData(myData):
     ts = int(myData['ts']) 
     string1 = myData['string1']
     string2 = myData['string2']
+    device  = myData['dev']
+    grid    = myData['grid']
 
-    p = influxdb_client.Point("power").tag("name","solis").field("string1", string1['power']).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
 
-    p = influxdb_client.Point("power").tag("name","solis").field("string2", string2['power']).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p = influxdb_client.Point("solis").tag("device",device)
+    p.time(ts,write_precision=WritePrecision.S)
 
-    p = influxdb_client.Point("power").tag("name","solis").field("total", myData['acpower'] * 1000).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p.field("power1", float(string1['power']))
+    p.field("current1", float(string1['current']))
+    p.field("voltage1", float(string1['voltage']))
 
-    p = influxdb_client.Point("current").tag("name","solis").field("string1", float(string1['current'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
-    p = influxdb_client.Point("current").tag("name","solis").field("string2", float(string2['current'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p.field("power2",   float(string2['power']))
+    p.field("current2", float(string2['current']))
+    p.field("voltage2", float(string2['voltage']))
 
-    p = influxdb_client.Point("voltage").tag("name","solis").field("string1", float(string1['voltage'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
-    p = influxdb_client.Point("voltage").tag("name","solis").field("string2", float(string2['voltage'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
+    p.field("igbt_temp", myData['inverter_temp'])
 
-    p = influxdb_client.Point("temperature").tag("name","solis").field("igbt", myData['inverter_temp']).time(ts,write_precision=WritePrecision.S)
+    p.field("totalpower", myData['acpower'] * 1000)
+    p.field("gridfreq", float(grid['freq']))
+
+    p.field("uac1", float(grid['phases'][0]['voltage']))
+    p.field("uac2", float(grid['phases'][1]['voltage']))
+    p.field("uac3", float(grid['phases'][2]['voltage']))
+
+    p.field("iac1", float(grid['phases'][0]['current']))
+    p.field("iac2", float(grid['phases'][1]['current']))
+    p.field("iac3", float(grid['phases'][2]['current']))
+
     write_api.write(bucket=bucket, org=influx_credentials.org, record=p)
 
     print(datetime.now(), "Saved")
@@ -63,7 +70,7 @@ def on_message(client, userdata, message):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/solarpower")
+        client.subscribe(mqtt_broker.topic_prefix + "/+/solarpower")
         connected = True
     else:
         print("connection failed, rc=",rc)            
