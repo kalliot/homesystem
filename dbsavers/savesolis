@@ -63,7 +63,7 @@ def on_message(client, userdata, message):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/solarpower")
+        client.subscribe("home/kallio/+/solarpower")
         connected = True
     else:
         print("connection failed, rc=",rc)            
@@ -73,7 +73,7 @@ def on_disconnect(client, userdata, rc):
     if rc!=7:
         client.reconnect()
     else:
-        time.sleep(30)
+        sleep(30)          
 
 
 
@@ -110,5 +110,5 @@ while (True):
         exit(0)
 
     except:
-        raise
+        raise        
 

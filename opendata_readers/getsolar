@@ -15,7 +15,7 @@ from queue import Queue, Empty
 import paho.mqtt.client as mqtt 
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import *
 
 
 prevTimestamp=0
@@ -91,7 +91,25 @@ def queryCloud():
 
     url = 'https://www.soliscloud.com:13333'
     req = url + CanonicalizedResource
-    return requests.post(req, data=Body, headers=header).json()
+    return requests.post(req, data=Body, headers=header)
+
+
+def publishError(recData):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "solarerror",
+        "dev"     :      solis_credentials.serialnumber,
+        "ts"      :      now,
+        "category":      "http",
+        "code"    :      recData.status_code,
+        "description" :  recData.reason
+    }
+    topic = mqtt_broker.topic_prefix + "/" + solis_credentials.serialnumber + "/solarpower/error"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print("mqtt publish of error failed")
 
 
 def publishData(recData):
@@ -99,6 +117,10 @@ def publishData(recData):
 
     ret = False
     myData = recData['data']
+
+    if myData.get('dataTimestamp') is None:
+        return 120
+
     ts = int(myData['dataTimestamp']) 
     now = int(time.time()) * 1000
     diff = now - ts
@@ -109,6 +131,7 @@ def publishData(recData):
 
         jsonRec = {
             "id"     :      "solarpower",
+            "dev"    :      solis_credentials.serialnumber,
             "ts"     :      int(ts / 1000), 
             "string1": {
                 "power" :      myData['pow1'],
@@ -141,7 +164,7 @@ def publishData(recData):
             "acpower":      myData['pac'],
             "inverter_temp" : myData['inverterTemperature']
         }
-        topic = "home/kallio/solarpower"
+        topic = mqtt_broker.topic_prefix + "/" + solis_credentials.serialnumber + "/solarpower"
         try:
             client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
         except:
@@ -166,7 +189,7 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.now(), "Start")
 client.loop_start()
 
-client.subscribe("home/kallio/celestials")
+client.subscribe(mqtt_broker.topic_prefix + "/celestials")
 
 
 waitTime = 3 # wait enough to get celestials first
@@ -190,7 +213,11 @@ while True:
     except Empty:
         print(datetime.now(),"query")
         x = queryCloud()
-        waitTime = publishData(x)
+        if x.status_code == 200:
+            waitTime = publishData(x.json())
+        else:
+            publishError(x)
+            waitTime = 60
     
     except KeyboardInterrupt:
         client.disconnect()
