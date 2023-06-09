@@ -15,11 +15,11 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import *
 
 
 def saveData(recData):
-    storage = "forever"
+    storage = "yearly"
 
     client = influxdb_client.InfluxDBClient(
         url=influx_credentials.url,
@@ -27,25 +27,22 @@ def saveData(recData):
         org=influx_credentials.org
     )
 
-    write_api = client.write_api(write_options=SYNCHRONOUS)
-    ts = int(recData['ts'])
-    print(ts, datetime.fromtimestamp(ts))
+    if (recData['id'] == "weather"):
+       write_api = client.write_api(write_options=SYNCHRONOUS)
+       ts = int(recData['ts'])
+       print(ts, datetime.fromtimestamp(ts))
 
-    p = influxdb_client.Point("uvindex").tag("name","weather").field("solar", int(recData['uvindex'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
-
-    p = influxdb_client.Point("radiation").tag("name","weather").field("solar", int(recData['solarradiation'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
-
-    if (recData['solarenergy']):
-        p = influxdb_client.Point("energy").tag("name","weather").field("solar", float(recData['solarenergy'])).time(ts,write_precision=WritePrecision.S)
-        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
-
-    p = influxdb_client.Point("snow").tag("name","weather").field("efficiency", int(recData['snow'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
-
-    p = influxdb_client.Point("temperature").tag("name","weather").field("efficiency", float(recData['temperature'])).time(ts,write_precision=WritePrecision.S)
-    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+       p = influxdb_client.Point("weather").tag("name","forecast")
+       p.time(ts,write_precision=WritePrecision.S)
+       p.field("uvindex", int(recData['uvindex']))
+       p.field("radiation", int(recData['solarradiation']))
+       if (recData['solarenergy']):
+           p.field("energy", float(recData['solarenergy']))
+       p.field("snow", int(recData['snow']))
+       p.field("cloudcover", int(recData['cloudcover']))
+       p.field("temperature", float(recData['temperature']))
+       p.field("dew", float(recData['dew']))
+       write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
 
 def on_message(client, userdata, message):
@@ -54,7 +51,7 @@ def on_message(client, userdata, message):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/weather/#")
+        client.subscribe(mqtt_broker.topic_prefix + "/weather/#")
         connected = True
     else:
         print("connection failed, rc=",rc)            

@@ -12,10 +12,10 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from influx_credentials import *
 
-
+#Charging is on:
 #home/kallio/0000000006133b1d/battery 
 #{"id": "battery", 
 #    "dev": "0000000006133b1d", 
@@ -25,10 +25,26 @@ from influx_credentials import *
 #    "BatVccVolt": 4.208, 
 #    "BatIddAmps": 58.04878048780488, 
 #    "McuVccVolt": 3306, 
-#    "BatPinCVolt": 4233, 
+#    "BatPinCVolt": 4233,
 #    "ChargeTypeCVolt": 16, 
 #    "ChargeMicroVolt": 5250, 
 #    "BatTemperature": 47, 
+#}
+
+#Running on batteries:
+#home/kallio/0000000006133b1d/battery
+#    {"id": "battery",
+#    "dev": "0000000006133b1d",
+#    "ts": 1680521150,
+#    "PiVccVolt": 5.244,
+#    "PiIddAmps": 388.89823380992425,
+#    "BatVccVolt": 4.16,
+#    "BatIddAmps": -898.048780487805,
+#    "McuVccVolt": 3301,
+#    "BatPinCVolt": 4144,
+#    "ChargeTypeCVolt": 48,
+#    "ChargeMicroVolt": 19,
+#    "BatTemperature": 47,
 #}
 
 
@@ -79,7 +95,7 @@ def on_disconnect(client, userdata, rc):
         sleep(30)          
 
 
-msgqueue = Queue(maxsize=15)    
+msgqueue = Queue(maxsize=5)
 pid = os.getpid()
 
 client = mqtt.Client("influx_ups_saver:" + str(pid))

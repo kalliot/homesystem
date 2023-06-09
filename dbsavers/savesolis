@@ -18,12 +18,12 @@ from setup import mqtt_broker, influx_credentials
 
 
 def saveData(myData):
-    bucket = "forever"
+    bucket = "yearly"
 
     client = influxdb_client.InfluxDBClient(
-        url   = influx.url,
-        token = influx.token,
-        org   = influx.org
+        url   = influx_credentials.url,
+        token = influx_credentials.token,
+        org   = influx_credentials.org
     )
  
 
