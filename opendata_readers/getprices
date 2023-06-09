@@ -38,6 +38,23 @@ def on_disconnect(client, userdata, rc):
 def on_publish(client,userdata,result):
     pass
 
+def publishError(recData):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "nordpoolerror",
+        "dev"     :      "spot-hinta",
+        "ts"      :      now,
+        "category":      "http",
+        "code"    :      recData.status_code,
+        "description" :  recData.reason
+    }
+    topic = mqtt_broker.topic_prefix + "/elprice/error"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print("mqtt publish of error failed")
+
 
 def queryCloud():
 
@@ -52,7 +69,7 @@ def queryCloud():
         ErrorInfo= e.read().decode()
         print('Error code: ', e.code,ErrorInfo)
         sys.exit()
-    return data.json()
+    return data
 
 
 pid = os.getpid()
@@ -67,29 +84,39 @@ client.loop_start()
 
 cnt = 0
 
-x = queryCloud()
-now = int(time.time())
-for hour in x:
-    ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-    if (ts > (now - 3600)):    
-        cnt = cnt +1
-        if (cnt > 24):
-            break
+for i in range(3):
+    x = queryCloud()
 
-        cents = int(float(hour['PriceWithTax'])*100)
-        strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
-        topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
+    data = x.json()
+    if x.status_code == 200:
+        now = int(time.time())
+        for hour in data:
+            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+            if (ts > (now - 3600)):
+                cnt = cnt +1
+                if (cnt > 24):
+                    break
 
-        send_msg = {
-                'id': 'elprice',
-                'hour': strhour,
-                'ts': ts,
-                'day': datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H"),
-                'price': cents
-        }
+                cents = float(hour['PriceWithTax']) * 100
+                strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
+                topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
 
-        msg = json.dumps(send_msg)
-        print(topic, msg)
-        client.publish(topic, msg, qos=0, retain=True)
+                send_msg = {
+                        'id': 'elprice',
+                        'hour': strhour,
+                        'ts': ts,
+                        'day': datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H"),
+                        'price': cents
+                }
+
+                msg = json.dumps(send_msg)
+                print(topic, msg)
+                client.publish(topic, msg, qos=0, retain=True)
+        break
+
+    else:
+        publishError(x)
+        time.sleep(10)
+
 
 print("done.")

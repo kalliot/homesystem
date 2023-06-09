@@ -8,9 +8,10 @@ import json
 import paho.mqtt.client as mqtt 
 import os
 import sys
+from time import sleep
 
-sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+sys.path.insert(1, '../config')
+from setup import *
 
 
 def queryCloud():
@@ -53,21 +54,8 @@ def queryCloud():
         ApiQuery+="&include="+Include
 
     ApiQuery+="&key="+weather_credentials.ApiKey
+    return requests.get(ApiQuery)
 
-
-    try: 
-        data = requests.get(ApiQuery)
-        
-    except urllib.error.HTTPError  as e:
-        ErrorInfo= e.read().decode() 
-        print('Error code: ', e.code, ErrorInfo)
-        sys.exit()
-    except  urllib.error.URLError as e:
-        ErrorInfo= e.read().decode() 
-        print('Error code: ', e.code,ErrorInfo)
-        sys.exit()
-
-    return data.json()
 
 def on_message(client, userdata, message):
     print(message.payload)
@@ -104,9 +92,27 @@ def publishCelestialData(recData, tzoffset):
         "sunsetEpoch":  recData['sunsetEpoch'],
         "moonphase": recData['moonphase']
     }    
-    topic = 'home/kallio/celestials'
+    topic = mqtt_broker.topic_prefix + "/celestials"
     msg = json.dumps(jsonRec)
     client.publish(topic, msg, qos=0, retain=True)
+
+
+def publishError(recData):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "weathererror",
+        "dev"     :      "visualcrossing",
+        "ts"      :      now,
+        "category":      "http",
+        "code"    :      recData.status_code,
+        "description" :  recData.reason
+    }
+    topic = mqtt_broker.topic_prefix + "/weather/error"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print("mqtt publish of error failed")
 
 
 def publishHourData(recData, tzoffset):
@@ -131,7 +137,7 @@ def publishHourData(recData, tzoffset):
         "humidity": recData['humidity'],
         "dew": recData['dew']
     }    
-    topic = 'home/kallio/weather/' + datetime.utcfromtimestamp(ts).strftime("%H")
+    topic = mqtt_broker.topic_prefix + "/weather/" + datetime.utcfromtimestamp(ts).strftime("%H")
     msg = json.dumps(jsonRec)
     client.publish(topic, msg, qos=0, retain=True)
 
@@ -146,13 +152,21 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.now(), "Start")
 client.loop_start()
 
-x = queryCloud()
-tzoffset = x['tzoffset']
-print("tzoffset=",tzoffset)
+for i in range(3):
+    x = queryCloud()
+    if x.status_code == 200:
+        data = x.json()
+        tzoffset = data['tzoffset']
+        print("tzoffset=",tzoffset)
 
-for day in x['days']:
-    publishCelestialData(day, tzoffset)
-    for hour in day['hours']:
-        publishHourData(hour, tzoffset)
+        for day in data['days']:
+            publishCelestialData(day, tzoffset)
+            for hour in day['hours']:
+                publishHourData(hour, tzoffset)
+        break
 
+    else:
+        publishError(x)
+        sleep(10)
+            
 print('done')

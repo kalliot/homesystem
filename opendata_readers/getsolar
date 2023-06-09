@@ -205,6 +205,8 @@ while True:
             waitTime = sunrise + 1800 - now         # Day has changed, midnight has passed, sunrise is exact.
     try:
         print(datetime.now(), "wait is", waitTime, "seconds")
+        if waitTime < 0:
+            waitTime = 60
         data = msgqueue.get(block=True, timeout=waitTime)
         if data is None:
             continue
