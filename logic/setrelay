@@ -18,11 +18,12 @@ currentprice = 300                             # is 3eur/kwh enough high price?
 currentconsumption = int(20000 / wattsPerTick) # 20kW
 avgconsumption = currentconsumption
 relaystate = False
-relayinstance = 2                              # which relay is in use 0..3
+solarpower = 0
+relayinstance = 1                              # which relay is in use 0..3
 shellynumber = 1
 pricelimit = 12                                # in cents
 consumptionlimit = int(2000 / wattsPerTick)    # put relay on in in this consumption
-loadincrement = int(1800 / wattsPerTick)       # load controlled by relay is about 1800W
+loadincrement = int(1500 / wattsPerTick)       # load controlled by relay is about 1500W
                                                # if load is on and consumption is over consumptionlimit + loadincrement
                                                # then put relay off
 def setRelay(state):
@@ -40,7 +41,7 @@ def setRelay(state):
 
 
 def processData(eldata):
-    global currentprice, currentconsumption
+    global currentprice, currentconsumption, solarpower
     global relaystate, avgconsumption, pricelimit
     global consumptionlimit, loadincrement
 
@@ -71,24 +72,42 @@ def processData(eldata):
         if id == "relay":
             relaystate = eldata['state']
 
+        if id == "solarpower":
+            solarpower = int(1000 * float(eldata['acpower']))
+
+
     if currentprice < pricelimit:  
-        # using avgconsumption, to put relay on more carelessly
-        if avgconsumption <= consumptionlimit:  
+        if (solarpower > 3000):
             if (relaystate == False):
                 changed = True
                 relaystate = True
-        else:
-            if currentconsumption > (consumptionlimit + loadincrement):
+            else:
                 if relaystate == True:  
                     changed = True
                     relaystate = False
+
+        #-------------------------------------------------------------------
+        # At the moment I don't have stock price, so, no handling of heating
+        # where price is low
+        #-------------------------------------------------------------------
+
+        # using avgconsumption, to put relay on more carelessly
+        #if avgconsumption <= consumptionlimit:  
+        #    if (relaystate == False):
+        #        changed = True
+        #        relaystate = True
+        #else:
+        #    if currentconsumption > (consumptionlimit + loadincrement):
+        #        if relaystate == True:  
+        #            changed = True
+        #            relaystate = False
     else: 
         # if price is high, dont care about consumption, just keep relay off.
         if relaystate == True:  
             changed = True
             relaystate = False
 
-    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "consumption=", currentconsumption, "state=", relaystate)
+    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "solarpower=", solarpower, "consumption=", currentconsumption, "state=", relaystate)
     if changed:
         setRelay(relaystate)
 
@@ -131,6 +150,7 @@ client.loop_start()
 
 topics = [("home/kallio/elprice/current",0),
           ("home/kallio/esp277998/parameters/counter/26",0),
+          ("home/kallio/+/solarpower",0),
           ("home/kallio/relay/" +str(relayinstance) + "/shelly" + str(shellynumber) + "/state", 0),
           ("home/kallio/heating/setup",0)]
 
