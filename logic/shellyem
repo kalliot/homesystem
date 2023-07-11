@@ -1,0 +1,193 @@
+#!/usr/bin/env python
+
+import json
+import paho.mqtt.client as mqtt 
+import paho.mqtt.subscribe as subscribe
+from queue import Queue, Empty
+from datetime import datetime
+import time
+import sys
+
+sys.path.insert(1, '../config')
+from setup import *
+
+
+class phase:
+    def __init__(self, phase):
+        self.phase = phase
+        self.power = 0.0
+        self.current = 0.0
+        self.voltage = 0.0
+        self.total = 0.0
+        self.pf = 0.0
+        self.count = 0
+
+phases = [phase(0),
+          phase(1),
+          phase(2)]
+
+#sumall = phase(3)
+all_power_avg = []          
+publish_interval = 15
+
+def calcAvg():
+    pcount = 0
+    sum = 0
+    for item in all_power_avg:
+        pcount = pcount + 1
+        sum += item
+    return sum / pcount
+
+
+def resetPhase(phase):
+    phase.power = 0.0
+    phase.power = 0.0
+    phase.current = 0.0
+    phase.voltage = 0.0
+    phase.total = 0.0
+    phase.pf = 0.0
+    phase.count = 0
+
+
+def publishPhase(phase):
+    if phase.count == 0:
+        return
+    now = int(time.time())
+    measurement = {
+        'id': 'elproduction',
+        'phase' : phase.phase,
+        'power': round(phase.power / phase.count,2),
+        'current': round(phase.current / phase.count,2),
+        'voltage': round(phase.voltage  / phase.count,2),
+        'pf': round(phase.pf  / phase.count,2),
+        'total': round(phase.total  / phase.count,2),
+        'ts': now
+    }
+    #print(datetime.utcnow(),"count=",phase.count, json.dumps(measurement))
+    client.publish("home/kallio/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement))
+    resetPhase(phase)
+
+def allCount():
+    return (phases[0].count + phases[1].count + phases[2].count) / 3
+
+def publishSum():
+    count = allCount()
+    if count == 0:
+        return
+
+    now = int(time.time())
+    power = (phases[0].power + phases[1].power + phases[2].power)  / count
+    all_power_avg.append(power)
+    if len(all_power_avg) > 5:
+        all_power_avg.pop(0)
+
+    totals = {
+        'id': 'elproduction',
+        'phase': 'all',
+        'power': round(power, 2),
+        'poweravg': round(calcAvg(),2),
+        'ts': now
+    }
+    #print(datetime.utcnow(),"count=", allCount(), json.dumps(totals))
+    client.publish("home/kallio/phase/all/elproduction",json.dumps(totals))
+    #resetPhase(sumall)
+
+
+def processData(eldata):
+    global phases #, sumall
+    arr = eldata.topic.split("/")
+    item = arr[4]
+    
+    phase = int(arr[3])
+    if item == "power":
+        phases[phase].power += float(eldata.payload)
+        #sumall.power += phases[phase].power
+        phases[phase].count = phases[phase].count + 1
+
+    if item == "current":
+        phases[phase].current += float(eldata.payload)
+        #sumall.current += phases[phase].current
+
+    if item == "voltage":
+        phases[phase].voltage += float(eldata.payload)
+        #sumall.voltage += phases[phase].voltage
+
+    if item == "total":
+        phases[phase].total += float(eldata.payload)
+        #sumall.total += phases[phase].total
+
+    if item == "pf":
+        phases[phase].pf += float(eldata.payload)
+        #sumall.pf += phases[phase].pf
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+
+def on_publish(client, userdata,result):
+    pass
+
+
+msgqueue = Queue(maxsize=20)
+client = mqtt.Client("shelly_em1") 
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+client.subscribe("shellies/shelly_em/emeter/#")
+
+prevStatisticsTS = int(time.time()) - (publish_interval - 3)
+waitTime = publish_interval
+
+while True:
+    now = int(time.time())
+    elapsed = now - prevStatisticsTS
+    if elapsed >= publish_interval:
+        waitTime = publish_interval
+        prevStatisticsTS = now
+        publishSum()
+        publishPhase(phases[0])
+        publishPhase(phases[1])
+        publishPhase(phases[2])
+        
+    else:
+        waitTime = publish_interval - elapsed
+        if waitTime <= 0:
+            waitTime = 0
+        
+    try:
+        data = msgqueue.get(block=True, timeout=waitTime)
+        if data is None:
+            continue
+        processData(data)
+
+    except Empty:        
+        pass
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+    except:
+        raise        
