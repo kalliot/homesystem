@@ -9,43 +9,55 @@ import paho.mqtt.subscribe as subscribe
 from queue import Queue
 import sys
 
+#sys.path.insert(1, '/home/pi/config')
 sys.path.insert(1, '../config')
-from influx_credentials import *
+from setup import *
 
+class heater:
+    def __init__(self, relay, low, high):
+        self.relay = relay
+        self.lowtemp = low
+        self.hightemp = high
+        self.state = False
+        self.changed = False
 
-wattsPerTick = 33                              # one tick is 33W
 currentprice = 300                             # is 3eur/kwh enough high price?
 currentconsumption = 0
 avgconsumption = currentconsumption
 relaystate = False
-solarpower = 0
-relayinstance = 0                              # which relay is in use 0..3
+elheater = 0                                   # relay index of electric boiler heater
 shellynumber = 1
 pricelimit = 12                                # in cents
 consumptionlimit = 2100                        # put relay on in if base consumption is below this
 loadincrement = 2000                           # load controlled by relay is about 2000W
                                                # if load is on and consumption is over consumptionlimit - loadincrement
                                                # then put relay off
+burner = heater(3, 52, 54)
+elheater = heater(0, 65, 70)
 
-def setRelay(state):
-    global relayinstance, shellynumber
+boilertempreader = "5bc674"
+boilertempsensor = "28b867746008f"
+boilertemp = 0.0
+
+def setRelay(state, relay):
+    global elheater, shellynumber, burner
 
     relaymsg = {
         'id': 'relay',
-        'contact': relayinstance,
+        'contact': relay,
         'state': state
     }
-    time.sleep(1)  # send consecutive relay orders with 1 sec delay
     setrelaytopic="home/kallio/relay/shelly" + str(shellynumber) + "/setstate"
-    print(setrelaytopic, json.dumps(relaymsg))
+    print(setrelaytopic,json.dumps(relaymsg))
     client.publish(setrelaytopic,json.dumps(relaymsg))
+    time.sleep(1)  # send consecutive relay orders with 1 sec delay 
     
 
 
 def processData(eldata):
-    global currentprice, currentconsumption, solarpower
+    global currentprice, currentconsumption, boilertemp
     global relaystate, avgconsumption, pricelimit
-    global consumptionlimit, loadincrement
+    global consumptionlimit, loadincrement, elheater
 
     changed = False
     
@@ -67,16 +79,24 @@ def processData(eldata):
             pricelimit = int(eldata['pricelimit'])
 
         if id == "relay":
-            relaystate = eldata['state']
+            contact = int(eldata['contact'])
+            if contact == elheater:
+                relaystate = eldata['state']
 
-        if id == "solarpower":
-            solarpower = int(1000 * float(eldata['acpower']))
+            if contact == burner.relay:
+                print("received relay msg, setting", contact, "to", eldata['state'])
+                burner.state = eldata['state']
+
+            if contact == 1 or contact == 2:
+                return    
 
         if (id == "elproduction" and eldata['phase'] == 'all'):
             currentconsumption = int(eldata['power'])
             avgconsumption = int(eldata['poweravg'])
 
-    
+        if id == "temperature" and eldata['dev'] == boilertempreader and eldata['sensor'] == boilertempsensor:
+            boilertemp = float(eldata['value'])
+   
 
         #-------------------------------------------------------------------
         # At the moment I don't have stock price agreement, so, no handling
@@ -101,9 +121,25 @@ def processData(eldata):
             changed = True
             relaystate = False
 
-    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "solarpower=", solarpower, "consumption=", currentconsumption, "state=", relaystate)
+    if boilertemp != 0.0: # value is something else than initial value
+        if boilertemp <= burner.lowtemp:
+            if burner.state == False:
+                burner.state = True
+                burner.changed = True
+
+        if boilertemp >= burner.hightemp:    
+            if burner.state == True:
+                burner.state = False
+                burner.changed = True
+
+    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "boilertemp=", boilertemp, "consumption=", currentconsumption, "elstate=", relaystate, "burnerstate=", burner.state)
     if changed:
-        setRelay(relaystate)
+        setRelay(relaystate, elheater)
+        pass
+
+    if burner.changed == True:
+        burner.changed = False
+        setRelay(burner.state, burner.relay)
 
 
 def on_message(client, userdata, message):
@@ -132,7 +168,7 @@ def on_publish(client, userdata,result):
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client("setrelay2" + str(relayinstance)) #create new instance
+client = mqtt.Client("setrelayx" + str(elheater)) #create new instance
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -143,13 +179,13 @@ print(datetime.utcnow(), "Start")
 client.loop_start()
 
 topics = [("home/kallio/elprice/current",0),
-          #("home/kallio/esp277998/parameters/counter/26",0),
-          ("home/kallio/+/solarpower",0),
           ("home/kallio/phase/all/elproduction",0),
-          ("home/kallio/relay/" +str(relayinstance) + "/shelly" + str(shellynumber) + "/state", 0),
+          ("home/kallio/esp" + boilertempreader + "/parameters/temperature/" + boilertempsensor,0),
+          ("home/kallio/relay/+/shelly" + str(shellynumber) + "/state", 0),
           ("home/kallio/heating/setup",0)]
 
-setRelay(False)
+#setRelay(False, elheater)
+#setRelay(False, burner.relay)
 client.subscribe(topics)
 
 while True:
