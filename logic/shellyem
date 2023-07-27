@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import sys
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 
@@ -26,7 +26,6 @@ phases = [phase(0),
           phase(1),
           phase(2)]
 
-#sumall = phase(3)
 all_power_avg = []          
 publish_interval = 15
 
@@ -63,20 +62,26 @@ def publishPhase(phase):
         'total': round(phase.total  / phase.count,2),
         'ts': now
     }
-    #print(datetime.utcnow(),"count=",phase.count, json.dumps(measurement))
-    client.publish("home/kallio/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement))
+    client.publish("home/kallio/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement), qos=0, retain=True)
     resetPhase(phase)
 
-def allCount():
-    return (phases[0].count + phases[1].count + phases[2].count) / 3
+def getPower():
+    power = 0
+    for i in range(3):
+        if phases[i].count and phases[i].power:
+            power += phases[i].power / phases[i].count
+    return power
 
 def publishSum():
-    count = allCount()
-    if count == 0:
-        return
 
+    power = getPower()
+
+    # should i print previous values here?
+    if power == 0:
+        print("sum is zero")
+        return
     now = int(time.time())
-    power = (phases[0].power + phases[1].power + phases[2].power)  / count
+
     all_power_avg.append(power)
     if len(all_power_avg) > 5:
         all_power_avg.pop(0)
@@ -88,38 +93,35 @@ def publishSum():
         'poweravg': round(calcAvg(),2),
         'ts': now
     }
-    #print(datetime.utcnow(),"count=", allCount(), json.dumps(totals))
-    client.publish("home/kallio/phase/all/elproduction",json.dumps(totals))
-    #resetPhase(sumall)
+    client.publish("home/kallio/phase/all/elproduction",json.dumps(totals), qos=0, retain=True)
 
 
 def processData(eldata):
-    global phases #, sumall
+    global phases
     arr = eldata.topic.split("/")
     item = arr[4]
     
     phase = int(arr[3])
     if item == "power":
         phases[phase].power += float(eldata.payload)
-        #sumall.power += phases[phase].power
         phases[phase].count = phases[phase].count + 1
 
     if item == "current":
         phases[phase].current += float(eldata.payload)
-        #sumall.current += phases[phase].current
 
     if item == "voltage":
         phases[phase].voltage += float(eldata.payload)
-        #sumall.voltage += phases[phase].voltage
 
     if item == "total":
         phases[phase].total += float(eldata.payload)
-        #sumall.total += phases[phase].total
 
     if item == "pf":
         phases[phase].pf += float(eldata.payload)
-        #sumall.pf += phases[phase].pf
 
+    if item == "total_returned" and phase == 2:
+        return True
+
+    return False
 
 def on_message(client, userdata, message):
     msgqueue.put(message)
@@ -147,7 +149,7 @@ def on_publish(client, userdata,result):
 
 
 msgqueue = Queue(maxsize=20)
-client = mqtt.Client("shelly_em1") 
+client = mqtt.Client("shelly_em")
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -160,11 +162,12 @@ client.subscribe("shellies/shelly_em/emeter/#")
 
 prevStatisticsTS = int(time.time()) - (publish_interval - 3)
 waitTime = publish_interval
+publishAllowed = False
 
 while True:
     now = int(time.time())
     elapsed = now - prevStatisticsTS
-    if elapsed >= publish_interval:
+    if publishAllowed and elapsed >= publish_interval:
         waitTime = publish_interval
         prevStatisticsTS = now
         publishSum()
@@ -181,7 +184,7 @@ while True:
         data = msgqueue.get(block=True, timeout=waitTime)
         if data is None:
             continue
-        processData(data)
+        publishAllowed = processData(data)
 
     except Empty:        
         pass
