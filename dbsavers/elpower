@@ -26,11 +26,28 @@ def saveData(myData):
     )
     write_api = dbclient.write_api(write_options=SYNCHRONOUS)
 
-    value = int(myData['power'])
-    p = influxdb_client.Point("watts").tag("name", "electricity").field("produced", value).time(1000 * myData['ts'],write_precision=WritePrecision.MS)
-    write_api.write(bucket="weekly", org=influx_credentials.org, record=p)
-       
-    print(datetime.now(), "watts=", value)
+    ts = int(recData['ts'])
+    if myData['phase'] == "all":
+        value = int(myData['power'])
+        p = influxdb_client.Point("watts").tag("name", "electricity").field("produced", value).time(1000 * ts,write_precision=WritePrecision.MS)
+        write_api.write(bucket="weekly", org=influx_credentials.org, record=p)
+
+    else: 
+        phase = int(myData['phase'])
+        watts = float(myData['power'])
+        current = float(myData['current'])
+        voltage = float(myData['voltage'])
+
+        p = influxdb_client.Point("electricity")
+        p.tag("name", "phase" + str(phase))
+        p.time(1000 * ts, write_precision=WritePrecision.MS)
+
+        p.field("watts", watts)
+        p.field("current", current)
+        p.field("voltage", voltage)
+        write_api.write(bucket="weekly", org=influx_credentials.org, record=p)
+
+    print(datetime.now(),"phase",myData['phase'],"watts=", value)
 
 
 def on_message(client, userdata, message):
@@ -43,7 +60,7 @@ def logger(client, userdata, level, buff):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe("home/kallio/phase/all/elproduction")
+        client.subscribe("home/kallio/phase/+/elproduction")
         connected = True
     else:
         print("connection failed, rc=",rc)            
