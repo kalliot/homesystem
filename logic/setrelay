@@ -26,11 +26,11 @@ avgconsumption = currentconsumption
 shellynumber = 1
 pricelimit = 12                                # in cents
 consumptionlimit = 2100                        # put relay on in if base consumption is below this
-loadincrement = 2000                           # load controlled by relay is about 2000W
-                                               # if load is on and consumption is over consumptionlimit - loadincrement
+heaterpower = 2000                             # load controlled by relay is about 2000W
+                                               # if load is on and consumption is over consumptionlimit - heaterpower
                                                # then put relay off
-burner = heater(3, 52, 53)
-elheater = heater(0, 65, 70)
+burner   = heater(3, 52.0, 52.6)
+elheater = heater(0, 65.0, 70.0)
 
 boilertempreader = "5bc674"
 boilertempsensor = "28b867746008f"
@@ -44,33 +44,68 @@ def setRelay(state, relay):
         'contact': relay,
         'state': state
     }
-    setrelaytopic="home/kallio/relay/shelly" + str(shellynumber) + "/setstate"
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(shellynumber) + "/setstate"
     client.publish(setrelaytopic,json.dumps(relaymsg))
     time.sleep(1)  # send consecutive relay orders with 1 sec delay 
     
+
+def getJsonNumericVar(source, name, defvalue):
+    try:
+        ret = float(source[name])
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
+
+
+def publishError(category, code, description):
+    global shellynumber
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "relayerror",
+        "dev"     :      "shelly" + str(shellynumber),
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/relay/shelly" + str(shellynumber)
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
 
 
 def processData(eldata):
     global currentprice, currentconsumption, boilertemp
     global avgconsumption, pricelimit
-    global consumptionlimit, loadincrement, elheater
+    global consumptionlimit, heaterpower, elheater
 
     if not (eldata.get('id') is None):
         id = eldata['id']
 
-        # first check nordpool price
         if id == 'elprice':
             current_date = datetime.utcnow().strftime("%Y%m%d%H") 
             if (current_date != eldata['day']):
-                print(datetime.utcnow(),"current price is not valid")
+                publishError("datetime", 1001, "current prices timestamp is not valid:" + eldata['day'])
+                print(datetime.utcnow(),"current prices timestamp is not valid")
             else:
                 currentprice=int(eldata['price'])
         
         elif id == 'heatsetup':
             print(datetime.utcnow(),"got heatsetup")
-            consumptionlimit = int(eldata['consumptionlimit'])
-            loadincrement = int(eldata['heaterpower'])
-            pricelimit = int(eldata['pricelimit'])
+            consumptionlimit  = getJsonNumericVar(eldata, 'consumptionlimit',   consumptionlimit)
+            heaterpower       = getJsonNumericVar(eldata, 'heaterpower',        heaterpower)
+            pricelimit        = getJsonNumericVar(eldata, 'pricelimit',         pricelimit)
+            burner.lowtemp    = getJsonNumericVar(eldata, 'burner_lowtemp',     burner.lowtemp)
+            burner.hightemp   = getJsonNumericVar(eldata, 'burner_hightemp',    burner.hightemp)
+            elheater.lowtemp  = getJsonNumericVar(eldata, 'elheater_lowtemp',   elheater.lowtemp)
+            elheater.hightemp = getJsonNumericVar(eldata, 'elheater_hightemp',  elheater.hightemp)
 
         elif id == "relay":
             contact = int(eldata['contact'])
@@ -83,39 +118,45 @@ def processData(eldata):
             elif contact == 1 or contact == 2:
                 return    
 
-            print("received relay msg, setting", contact, "to", eldata['state'])
+            print(datetime.utcnow(), "received relay msg, setting", contact, "to", eldata['state'])
 
-        elif (id == "elproduction" and eldata['phase'] == 'all'):
+        elif id == "elproduction" and \
+              eldata['phase'] == 'all':
             currentconsumption = int(eldata['power'])
             avgconsumption = int(eldata['poweravg'])
 
-        elif id == "temperature" and eldata['dev'] == boilertempreader and eldata['sensor'] == boilertempsensor:
+        elif id == "temperature" and \
+             eldata['dev'] == boilertempreader and \
+             eldata['sensor'] == boilertempsensor:
             boilertemp = float(eldata['value'])
    
 
-        #-------------------------------------------------------------------
-        # At the moment I don't have stock price agreement, so, no handling
-        # of heating where price is low
-        #-------------------------------------------------------------------
+    #-------------------------------------------------------------------
+    # At the moment I don't have stock price agreement, so, no handling
+    # of heating where price is low
+    #-------------------------------------------------------------------
 
-        # using avgconsumption, to put relay on more carelessly
-    if currentprice < pricelimit:  
-        if avgconsumption >= consumptionlimit:  
-            if (elheater.state == False):
-                elheater.changed = True
-                elheater.state = True
-        elif currentconsumption < (consumptionlimit - loadincrement):
-                if elheater.state == True:
-                    elheater.changed = True
-                    elheater.state = False
-
-    else: 
-        # if price is high, dont care about consumption, just keep relay off.
-        if elheater.state == True:
-            elheater.changed = True
-            elheater.state = False
+    # using avgconsumption, to put relay on more carelessly
 
     if boilertemp != 0.0: # value is something else than initial value
+        if currentprice < pricelimit:
+            if avgconsumption >= consumptionlimit and \
+               boilertemp <= elheater.lowtemp:
+                if (elheater.state == False):
+                    elheater.changed = True
+                    elheater.state = True
+            elif currentconsumption < (consumptionlimit - heaterpower) or \
+                 boilertemp >= elheater.hightemp:
+                    if elheater.state == True:
+                        elheater.changed = True
+                        elheater.state = False
+
+        else:
+            # if price is high, dont care about consumption, just keep relay off.
+            if elheater.state == True:
+                elheater.changed = True
+                elheater.state = False
+
         if boilertemp <= burner.lowtemp:
             if burner.state == False:
                 burner.state = True
@@ -126,7 +167,13 @@ def processData(eldata):
                 burner.state = False
                 burner.changed = True
 
-    print(datetime.now(),"price=", currentprice, "avgconsumption=", avgconsumption, "boilertemp=", boilertemp, "consumption=", currentconsumption, "elstate=", elheater.state, "burnerstate=", burner.state)
+    print(datetime.now(),"price:", currentprice, end=", ")
+    print("consumption:", currentconsumption, end=", ")
+    print("avgconsumption:", avgconsumption, end=", ")
+    print("boilertemp:", boilertemp, end=", ")
+    print("elstate:", elheater.state, end=", ")
+    print("burnerstate:", burner.state)
+
     if elheater.changed:
         elheater.changed = False
         setRelay(elheater.state, elheater.relay)
@@ -149,11 +196,13 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print(datetime.utcnow(),"connection failed, rc=",rc)
+        print(0,"connection failed, rc=",rc)
         connected = False
+
 
 def on_disconnect(client, userdata, rc):
     client.reconnect()
+
 
 def on_publish(client, userdata,result):
     pass
@@ -162,7 +211,7 @@ def on_publish(client, userdata,result):
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client("setrelay" + str(elheater)) #create new instance
+client = mqtt.Client("setrelay" + str(elheater.relay) + ":" + str(burner.relay)) #create new instance
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -172,11 +221,11 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-topics = [("home/kallio/elprice/current",0),
-          ("home/kallio/phase/all/elproduction",0),
-          ("home/kallio/esp" + boilertempreader + "/parameters/temperature/" + boilertempsensor,0),
-          ("home/kallio/relay/+/shelly" + str(shellynumber) + "/state", 0),
-          ("home/kallio/heating/setup",0)]
+topics = [(mqtt_broker.topic_prefix + "/elprice/current",0),
+          (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
+          (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/" + boilertempsensor,0),
+          (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
+          (mqtt_broker.topic_prefix + "/heating/setup",0)]
 
 client.subscribe(topics)
 
