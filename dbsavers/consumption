@@ -14,7 +14,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 sys.path.insert(1, '/home/pi/config')
-from influx_credentials import *
+from setup import *
 
 # 2.27124707 liters per hour
 # 2271.24707 milliliters
@@ -24,6 +24,7 @@ boilerSensors = "esp5bc674"
 burnerGpio = "33"
 boilerTemp = "28b867746008f"
 waterTemp = "28e1747360083"
+shellynumber = 1
 
 def saveTemperature(write_api, data, ts):
     temperature = float(data['value'])
@@ -70,6 +71,52 @@ def saveState(write_api, data, ts):
             print(datetime.now(), "state:", state, "delay:",ts - datats)
 
 
+def saveRelay(write_api, data):
+    contact = int(data['contact'])
+    tagname = "unknown"
+
+    if contact == 0:
+        tagname = "elheater2kw"
+
+    elif contact == 1:
+        tagname = "test"
+
+    elif contact == 2:
+        tagname = "elheater4kw"
+
+    elif contact == 3:
+        tagname = "burner_allowed"
+
+    else:
+        return
+
+    if bool(data['state']) == False:
+        state = 0 
+        prevstate = 1
+    else: 
+        state = 1
+        prevstate = 0
+    datats = int(data['ts']) * 1000
+    prevts = datats - 100 # minus 100ms
+    
+
+    p1 = influxdb_client.Point("state")
+    p1.time(prevts, write_precision=WritePrecision.MS)
+    p1.field("on", prevstate)
+
+    p2 = influxdb_client.Point("state")
+    p2.time(datats, write_precision=WritePrecision.MS)
+    p2.field("on", state)
+
+
+    p1.tag("name", tagname)
+    p2.tag("name", tagname)
+
+    write_api.write(bucket="forever", org=influx_credentials.org, record=p1)
+    write_api.write(bucket="forever", org=influx_credentials.org, record=p2)
+
+    print(datetime.now(), "relay:", contact, "state:", state, "prevstate:", prevstate)
+
 
 def saveData(myData):
 
@@ -86,8 +133,14 @@ def saveData(myData):
         saveState(write_api, myData, now)
         return
 
-    if id == "temperature":
+    elif id == "temperature":
         saveTemperature(write_api, myData, now)
+
+    elif id == "relay":
+        saveRelay(write_api,myData)
+
+    else:
+        pass
 
 
 def on_message(client, userdata, message):
@@ -100,9 +153,9 @@ def logger(client, userdata, level, buff):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        topic = "home/kallio/" + boilerSensors + "/parameters/#"
-        print("topic = ", topic)
-        client.subscribe(topic)
+        topics = [(mqtt_broker.topic_prefix + "/" + boilerSensors + "/parameters/#",0),
+                  (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0)]
+        client.subscribe(topics)
         connected = True
     else:
         print("connection failed, rc=",rc)            
@@ -122,7 +175,7 @@ GPIO.setup(led, GPIO.OUT)
 msgqueue = Queue(maxsize=4)    
 pid = os.getpid()
 
-client = mqtt.Client("influx_oil_saver:" + str(pid)) #create new instance
+client = mqtt.Client("relaystate_saver:" + str(pid)) #create new instance
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_disconnect = on_disconnect
@@ -148,3 +201,4 @@ while (True):
 
     except:
         raise        
+0
