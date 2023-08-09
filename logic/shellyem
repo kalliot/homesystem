@@ -2,7 +2,6 @@
 
 import json
 import paho.mqtt.client as mqtt 
-import paho.mqtt.subscribe as subscribe
 from queue import Queue, Empty
 from datetime import datetime
 import time
@@ -26,7 +25,8 @@ phases = [phase(0),
           phase(1),
           phase(2)]
 
-all_power_avg = []          
+all_power_avg = []
+prevpower = 0
 publish_interval = 15
 
 def calcAvg():
@@ -73,16 +73,16 @@ def getPower():
     return power
 
 def publishSum():
+    global prevpower
 
     power = getPower()
 
-    # should i print previous values here?
-    if power == 0:
-        print("sum is zero")
-        return
     now = int(time.time())
+    if power == 0:
+        power = prevpower
 
     all_power_avg.append(power)
+
     if len(all_power_avg) > 5:
         all_power_avg.pop(0)
 
@@ -93,6 +93,7 @@ def publishSum():
         'poweravg': round(calcAvg(),2),
         'ts': now
     }
+    prevpower = power
     client.publish("home/kallio/phase/all/elproduction",json.dumps(totals), qos=0, retain=True)
 
 
@@ -106,19 +107,22 @@ def processData(eldata):
         phases[phase].power += float(eldata.payload)
         phases[phase].count = phases[phase].count + 1
 
-    if item == "current":
+    elif item == "current":
         phases[phase].current += float(eldata.payload)
 
-    if item == "voltage":
+    elif item == "voltage":
         phases[phase].voltage += float(eldata.payload)
 
-    if item == "total":
+    elif item == "total":
         phases[phase].total += float(eldata.payload)
 
-    if item == "pf":
+    elif item == "pf":
         phases[phase].pf += float(eldata.payload)
 
-    if item == "total_returned" and phase == 2:
+    elif item == "total_returned" and phase == 2:
+        return True
+
+    elif item == "returned_energy" and phase == 2:
         return True
 
     return False
@@ -148,7 +152,7 @@ def on_publish(client, userdata,result):
     pass
 
 
-msgqueue = Queue(maxsize=20)
+msgqueue = Queue(maxsize=30)
 client = mqtt.Client("shelly_em")
 client.on_connect = on_connect
 client.on_message = on_message
@@ -178,15 +182,15 @@ while True:
     else:
         waitTime = publish_interval - elapsed
         if waitTime <= 0:
-            waitTime = 0
-        
+            waitTime = 1
+
     try:
         data = msgqueue.get(block=True, timeout=waitTime)
         if data is None:
             continue
         publishAllowed = processData(data)
 
-    except Empty:        
+    except Empty:
         pass
 
     except KeyboardInterrupt:
