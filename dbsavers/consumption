@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 import paho.mqtt.client as mqtt 
 import os
 from time import sleep
@@ -53,7 +52,7 @@ def saveState(write_api, data, ts):
             p = influxdb_client.Point("liters").tag("name", "heatoil").field("consumed", liters).time(1000 * datats,write_precision=WritePrecision.MS)
             write_api.write(bucket="forever", org=influx_credentials.org, record=p)
             
-            p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(closems,write_precision=WritePrecision.MS)
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 20).time(closems,write_precision=WritePrecision.MS)
             write_api.write(bucket="forever", org=influx_credentials.org, record=p)
             p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(1000 * datats,write_precision=WritePrecision.MS)
             write_api.write(bucket="forever", org=influx_credentials.org, record=p)
@@ -66,7 +65,7 @@ def saveState(write_api, data, ts):
 
             p = influxdb_client.Point("state").tag("name", "burner").field("on", 0).time(closems,write_precision=WritePrecision.MS)
             write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-            p = influxdb_client.Point("state").tag("name", "burner").field("on", 1).time(1000 * datats,write_precision=WritePrecision.MS)
+            p = influxdb_client.Point("state").tag("name", "burner").field("on", 20).time(1000 * datats,write_precision=WritePrecision.MS)
             write_api.write(bucket="forever", org=influx_credentials.org, record=p)
             print(datetime.now(), "state:", state, "delay:",ts - datats)
 
@@ -74,39 +73,42 @@ def saveState(write_api, data, ts):
 def saveRelay(write_api, data):
     contact = int(data['contact'])
     tagname = "unknown"
+    power = 0
 
     if contact == 0:
         tagname = "elheater2kw"
+        power = 2
 
     elif contact == 1:
         tagname = "test"
 
     elif contact == 2:
         tagname = "elheater4kw"
+        power = 4
 
     elif contact == 3:
         tagname = "burner_allowed"
+        power = 20
 
     else:
         return
 
     if bool(data['state']) == False:
-        state = 0 
-        prevstate = 1
+        prevpower = power
+        power = 0 
     else: 
-        state = 1
-        prevstate = 0
+        prevpower = 0
     datats = int(data['ts']) * 1000
     prevts = datats - 100 # minus 100ms
     
 
     p1 = influxdb_client.Point("state")
     p1.time(prevts, write_precision=WritePrecision.MS)
-    p1.field("on", prevstate)
+    p1.field("on", prevpower)
 
     p2 = influxdb_client.Point("state")
     p2.time(datats, write_precision=WritePrecision.MS)
-    p2.field("on", state)
+    p2.field("on", power)
 
 
     p1.tag("name", tagname)
@@ -115,7 +117,7 @@ def saveRelay(write_api, data):
     write_api.write(bucket="forever", org=influx_credentials.org, record=p1)
     write_api.write(bucket="forever", org=influx_credentials.org, record=p2)
 
-    print(datetime.now(), "relay:", contact, "state:", state, "prevstate:", prevstate)
+    print(datetime.now(), "relay:", contact, "power:", power, "prevpower:", prevpower)
 
 
 def saveData(myData):
@@ -201,4 +203,3 @@ while (True):
 
     except:
         raise        
-0
