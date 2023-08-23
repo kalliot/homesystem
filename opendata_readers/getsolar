@@ -105,7 +105,7 @@ def publishError(recData):
         "code"    :      recData.status_code,
         "description" :  recData.reason
     }
-    topic = mqtt_broker.topic_prefix + "/" + solis_credentials.serialnumber + "/solarpower/error"
+    topic = mqtt_broker.topic_prefix + "/error/solarpower/" + solis_credentials.serialnumber
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:

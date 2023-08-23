@@ -12,7 +12,7 @@ import sys
 import pytz
 import paho.mqtt.client as mqtt 
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import nordpool, mqtt_broker
 
 
@@ -49,7 +49,7 @@ def publishError(recData):
         "code"    :      recData.status_code,
         "description" :  recData.reason
     }
-    topic = mqtt_broker.topic_prefix + "/elprice/error"
+    topic = mqtt_broker.topic_prefix + "/error/elprice"
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
@@ -98,6 +98,7 @@ for i in range(3):
                     break
 
                 cents = float(hour['PriceWithTax']) * 100
+                centsNoTax = float(hour['PriceNoTax']) * 100
                 strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
                 topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
 
@@ -106,7 +107,8 @@ for i in range(3):
                         'hour': strhour,
                         'ts': ts,
                         'day': datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H"),
-                        'price': cents
+                        'price': cents,
+                        'notax': centsNoTax
                 }
 
                 msg = json.dumps(send_msg)

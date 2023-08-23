@@ -51,7 +51,12 @@ def on_connect(client, userdata, flags, rc):
 
 def on_disconnect(client, userdata, rc):
     if rc!=7:
-        client.reconnect()
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            sleep(30)
+
     else:
         sleep(30)
  

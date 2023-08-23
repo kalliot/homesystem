@@ -10,7 +10,7 @@ import os
 import sys
 from time import sleep
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 
@@ -108,7 +108,7 @@ def publishError(recData):
         "code"    :      recData.status_code,
         "description" :  recData.reason
     }
-    topic = mqtt_broker.topic_prefix + "/weather/error"
+    topic = mqtt_broker.topic_prefix + "/error/weather"
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:

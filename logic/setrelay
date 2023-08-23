@@ -13,10 +13,10 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 class heater:
-    def __init__(self, relay, low, high):
+    def __init__(self, relay, low, hysteresis):
         self.relay = relay
         self.lowtemp = low
-        self.hightemp = high
+        self.hysteresis = hysteresis
         self.state = False
         self.changed = False
 
@@ -29,8 +29,8 @@ consumptionlimit = 2100                        # put relay on in if base consump
 heaterpower = 2000                             # load controlled by relay is about 2000W
                                                # if load is on and consumption is over consumptionlimit - heaterpower
                                                # then put relay off
-burner   = heater(3, 52.0, 52.6)
-elheater = heater(0, 65.0, 70.0)
+burner   = heater(3, 51.8, 0.4)
+elheater = heater(0, 73.0, 2.0)
 
 boilertempreader = "5bc674"
 boilertempsensor = "28b867746008f"
@@ -95,17 +95,16 @@ def processData(eldata):
                 publishError("datetime", 1001, "current prices timestamp is not valid:" + eldata['day'])
                 print(datetime.utcnow(),"current prices timestamp is not valid")
             else:
-                currentprice=int(eldata['price'])
+                currentprice=int(eldata['notax'])
         
         elif id == 'heatsetup':
             print(datetime.utcnow(),"got heatsetup")
             consumptionlimit  = getJsonNumericVar(eldata, 'consumptionlimit',   consumptionlimit)
-            heaterpower       = getJsonNumericVar(eldata, 'heaterpower',        heaterpower)
             pricelimit        = getJsonNumericVar(eldata, 'pricelimit',         pricelimit)
             burner.lowtemp    = getJsonNumericVar(eldata, 'burner_lowtemp',     burner.lowtemp)
-            burner.hightemp   = getJsonNumericVar(eldata, 'burner_hightemp',    burner.hightemp)
+            burner.hysteresis = getJsonNumericVar(eldata, 'burner_hysteresis',  burner.hysteresis)
             elheater.lowtemp  = getJsonNumericVar(eldata, 'elheater_lowtemp',   elheater.lowtemp)
-            elheater.hightemp = getJsonNumericVar(eldata, 'elheater_hightemp',  elheater.hightemp)
+            elheater.hysteresis = getJsonNumericVar(eldata, 'elheater_hysteresis',  elheater.hysteresis)
 
         elif id == "relay":
             contact = int(eldata['contact'])
@@ -146,7 +145,7 @@ def processData(eldata):
                     elheater.changed = True
                     elheater.state = True
             elif currentconsumption < (consumptionlimit - heaterpower) or \
-                 boilertemp >= elheater.hightemp:
+                 boilertemp >= (elheater.lowtemp + elheater.hysteresis):
                     if elheater.state == True:
                         elheater.changed = True
                         elheater.state = False
@@ -162,7 +161,7 @@ def processData(eldata):
                 burner.state = True
                 burner.changed = True
 
-        elif boilertemp >= burner.hightemp:
+        elif boilertemp >= (burner.lowtemp + burner.hysteresis):
             if burner.state == True:
                 burner.state = False
                 burner.changed = True

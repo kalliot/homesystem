@@ -63,7 +63,12 @@ def sendData(data):
 
 def on_disconnect(client, userdata, rc):
     if rc!=7:
-        client.reconnect()
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+
     else:
         time.sleep(30)
 

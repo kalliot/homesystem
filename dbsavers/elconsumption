@@ -41,7 +41,7 @@ def on_message(client, userdata, message):
     msgqueue.put(message.payload)
 
 def logger(client, userdata, level, buff):
-    print("level=",level," buff=",buff)
+    print(datetime.now(), "level=",level," buff=",buff)
 
 
 def on_connect(client, userdata, flags, rc):
@@ -50,12 +50,17 @@ def on_connect(client, userdata, flags, rc):
         client.subscribe("home/kallio/esp277998/parameters/counter/26")
         connected = True
     else:
-        print("connection failed, rc=",rc)            
+        print(datetime.now(),"connection failed, rc=",rc)
         connected = False
 
 def on_disconnect(client, userdata, rc):
     if rc!=7:
-        client.reconnect()
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+
     else:
         time.sleep(30)          
  
