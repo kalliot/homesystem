@@ -92,7 +92,7 @@ def publishSum():
         qtotals = {
             'id': 'power15min',
             'phase': 'all',
-            'W15min': round(seconds, 2),
+            'W15min': round(W15min, 2),
             'seconds' : prevseconds,
             'ts': now
         }

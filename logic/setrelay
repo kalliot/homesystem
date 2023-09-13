@@ -12,15 +12,6 @@ import sys
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
-class heater:
-    def __init__(self, relay, low, hysteresis):
-        self.relay = relay
-        self.lowtemp = low
-        self.hysteresis = hysteresis
-        self.changets = 0
-        self.state = False
-        self.changed = False
-
 currentprice = 300                             # is 3eur/kwh enough high price?
 currentconsumption = 0
 W15min = 0
@@ -31,25 +22,42 @@ pricelimit = 12                                # in cents
 relayonminimum = 120                           # put is on minimum seconds
 heaterpower = 2000                             # load controlled by relay is about 2000W
 
-burner   = heater(3, 51.8, 0.4)
-elheater = heater(0, 73.0, 2.0)
+
+class heater:
+    def __init__(self, shellynumber, relay, low, hysteresis):
+        self.shellynumber = shellynumber
+        self.relay = relay
+        self.lowtemp = low
+        self.hysteresis = hysteresis
+        self.changets = int(time.time())
+        self.state = False
+
+    def setState(self, newState):
+        if newState == self.state:
+            return
+
+        now = int(time.time())
+        relaymsg = {
+            'id': 'relay',
+            'contact': self.relay,
+            'duration': now - self.changets,
+            'state': newState
+        }
+        setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(self.shellynumber) + "/setstate"
+        client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
+        self.changets = now
+        self.state = newState
+        time.sleep(1)  # send consecutive relay orders with 1 sec delay
+
+
+
+burner   = heater(1, 3, 51.8, 0.4)
+elheater = heater(1, 0, 73.0, 2.0)
 
 boilertempreader = "5bc674"
 boilertempsensor = "28b867746008f"
 boilertemp = 0.0
 
-def setRelay(state, relay):
-    global elheater, shellynumber, burner
-
-    relaymsg = {
-        'id': 'relay',
-        'contact': relay,
-        'state': state
-    }
-    setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(shellynumber) + "/setstate"
-    client.publish(setrelaytopic,json.dumps(relaymsg))
-    time.sleep(1)  # send consecutive relay orders with 1 sec delay 
-    
 
 def getJsonNumericVar(source, name, defvalue):
     try:
@@ -110,11 +118,13 @@ def processData(eldata):
 
         elif id == "relay":
             contact = int(eldata['contact'])
+            # we come here atleast when somebody clics relay states from
+            # the relay buttons or from the cloud.
             if contact == elheater.relay:
-                elheater.state = eldata['state']
+                elheater.setState(eldata['state'])
 
             elif contact == burner.relay:
-                burner.state = eldata['state']
+                burner.setState(eldata['state'])
 
             elif contact == 1 or contact == 2:
                 return    
@@ -152,29 +162,19 @@ def processData(eldata):
             if timeleft > relayonminimum and \
                 result < 5 and \
                 boilertemp <= elheater.lowtemp:
-                if (elheater.state == False):
-                    elheater.changed = True
-                    elheater.state = True
+                elheater.setState(True)
             elif W15min < 0.0 or \
                 boilertemp >= (elheater.lowtemp + elheater.hysteresis):
-                if (elheater.state == True):
-                    elheater.changed = True
-                    elheater.state = False
+                elheater.setState(False)
         else:
             # if price is high, dont care about consumption, just keep relay off.
-            if elheater.state == True:
-                elheater.changed = True
-                elheater.state = False
+            elheater.setState(False)
 
         if boilertemp <= burner.lowtemp:
-            if burner.state == False:
-                burner.state = True
-                burner.changed = True
+            burner.setState(True)
 
         elif boilertemp >= (burner.lowtemp + burner.hysteresis):
-            if burner.state == True:
-                burner.state = False
-                burner.changed = True
+            burner.setState(False)
 
     print(datetime.now(),"price:", currentprice, end=", ")
     print("consumption:", currentconsumption, end=", ")
@@ -182,16 +182,6 @@ def processData(eldata):
     print("boilertemp:", boilertemp, end=", ")
     print("elstate:", elheater.state, end=", ")
     print("burnerstate:", burner.state)
-
-    if elheater.changed:
-        elheater.changed = False
-        elheater.changets = int(time.time())
-        setRelay(elheater.state, elheater.relay)
-
-    if burner.changed == True:
-        burner.changed = False
-        burner.changets = int(time.time())
-        setRelay(burner.state, burner.relay)
 
 
 def on_message(client, userdata, message):
