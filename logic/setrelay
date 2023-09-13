@@ -17,18 +17,20 @@ class heater:
         self.relay = relay
         self.lowtemp = low
         self.hysteresis = hysteresis
+        self.changets = 0
         self.state = False
         self.changed = False
 
 currentprice = 300                             # is 3eur/kwh enough high price?
 currentconsumption = 0
+W15min = 0
+quart = 0
 avgconsumption = currentconsumption
 shellynumber = 1
 pricelimit = 12                                # in cents
-consumptionlimit = 2100                        # put relay on in if base consumption is below this
+relayonminimum = 120                           # put is on minimum seconds
 heaterpower = 2000                             # load controlled by relay is about 2000W
-                                               # if load is on and consumption is over consumptionlimit - heaterpower
-                                               # then put relay off
+
 burner   = heater(3, 51.8, 0.4)
 elheater = heater(0, 73.0, 2.0)
 
@@ -83,8 +85,8 @@ def publishError(category, code, description):
 
 def processData(eldata):
     global currentprice, currentconsumption, boilertemp
-    global avgconsumption, pricelimit
-    global consumptionlimit, heaterpower, elheater
+    global avgconsumption, pricelimit, W15min, quart
+    global relayonminimum, heaterpower, elheater
 
     if not (eldata.get('id') is None):
         id = eldata['id']
@@ -99,7 +101,7 @@ def processData(eldata):
         
         elif id == 'heatsetup':
             print(datetime.utcnow(),"got heatsetup")
-            consumptionlimit  = getJsonNumericVar(eldata, 'consumptionlimit',   consumptionlimit)
+            relayonminimum    = getJsonNumericVar(eldata, 'relayonminimum',     relayonminimum)
             pricelimit        = getJsonNumericVar(eldata, 'pricelimit',         pricelimit)
             burner.lowtemp    = getJsonNumericVar(eldata, 'burner_lowtemp',     burner.lowtemp)
             burner.hysteresis = getJsonNumericVar(eldata, 'burner_hysteresis',  burner.hysteresis)
@@ -123,6 +125,8 @@ def processData(eldata):
               eldata['phase'] == 'all':
             currentconsumption = int(eldata['power'])
             avgconsumption = int(eldata['poweravg'])
+            W15min = float(eldata['W15min'])
+            quart  = int(eldata['seconds'])
 
         elif id == "temperature" and \
              eldata['dev'] == boilertempreader and \
@@ -136,20 +140,26 @@ def processData(eldata):
     #-------------------------------------------------------------------
 
     # using avgconsumption, to put relay on more carelessly
-
     if boilertemp != 0.0: # value is something else than initial value
         if currentprice < pricelimit:
-            if avgconsumption >= consumptionlimit and \
-               boilertemp <= elheater.lowtemp:
+            timeleft = 900 - quart
+            remain = heaterpower - avgconsumption
+            # avoid division by zero
+            if remain == 0:
+                remain = 1
+            result = (timeleft * remain / 3600) - W15min
+
+            if timeleft > relayonminimum and \
+                result < 5 and \
+                boilertemp <= elheater.lowtemp:
                 if (elheater.state == False):
                     elheater.changed = True
                     elheater.state = True
-            elif currentconsumption < (consumptionlimit - heaterpower) or \
-                 boilertemp >= (elheater.lowtemp + elheater.hysteresis):
-                    if elheater.state == True:
-                        elheater.changed = True
-                        elheater.state = False
-
+            elif W15min < 0.0 or \
+                boilertemp >= (elheater.lowtemp + elheater.hysteresis):
+                if (elheater.state == True):
+                    elheater.changed = True
+                    elheater.state = False
         else:
             # if price is high, dont care about consumption, just keep relay off.
             if elheater.state == True:
@@ -175,10 +185,12 @@ def processData(eldata):
 
     if elheater.changed:
         elheater.changed = False
+        elheater.changets = int(time.time())
         setRelay(elheater.state, elheater.relay)
 
     if burner.changed == True:
         burner.changed = False
+        burner.changets = int(time.time())
         setRelay(burner.state, burner.relay)
 
 

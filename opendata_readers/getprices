@@ -2,7 +2,7 @@
 
 import time
 from datetime import datetime
-from datetime import timezone
+#from datetime import timezone
 import urllib.request
 import urllib.error
 import requests
@@ -97,8 +97,8 @@ for i in range(3):
                 if (cnt > 24):
                     break
 
-                cents = float(hour['PriceWithTax']) * 100
-                centsNoTax = float(hour['PriceNoTax']) * 100
+                cents = round(float(hour['PriceWithTax']) * 100,2)
+                centsNoTax = round(float(hour['PriceNoTax']) * 100, 2)
                 strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
                 topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
 

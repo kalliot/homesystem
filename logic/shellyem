@@ -27,6 +27,8 @@ phases = [phase(0),
 
 all_power_avg = []
 prevpower = 0
+W15min = 0
+prevseconds = 901
 publish_interval = 15
 
 def calcAvg():
@@ -62,8 +64,14 @@ def publishPhase(phase):
         'total': round(phase.total  / phase.count,2),
         'ts': now
     }
-    client.publish("home/kallio/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement), qos=0, retain=True)
+    client.publish(mqtt_broker.topic_prefix + "/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement), qos=0, retain=True)
     resetPhase(phase)
+
+def qnow(now):
+    divi = int(now / 900)
+    quart = divi * 900
+    return now - quart
+
 
 def getPower():
     power = 0
@@ -72,18 +80,34 @@ def getPower():
             power += phases[i].power / phases[i].count
     return power
 
+
 def publishSum():
-    global prevpower
+    global prevpower, W15min, prevseconds
 
     power = getPower()
-
     now = int(time.time())
+
+    seconds = qnow(now)
+    if (seconds < prevseconds):
+        qtotals = {
+            'id': 'power15min',
+            'phase': 'all',
+            'W15min': round(seconds, 2),
+            'seconds' : prevseconds,
+            'ts': now
+        }
+        client.publish(mqtt_broker.topic_prefix + "/phase/all/quarterhnet",json.dumps(qtotals), qos=0, retain=True)
+        W15min = 0
+
+    prevseconds = seconds
+
     if power == 0:
         power = prevpower
 
+    W15min += power / 240
     all_power_avg.append(power)
 
-    if len(all_power_avg) > 5:
+    if len(all_power_avg) > 8: # collect samples from 8 quarts = 2 minutes
         all_power_avg.pop(0)
 
     totals = {
@@ -91,10 +115,13 @@ def publishSum():
         'phase': 'all',
         'power': round(power, 2),
         'poweravg': round(calcAvg(),2),
+        'seconds'  : seconds,
+        'W15min' : round(W15min,2),
         'ts': now
     }
+
     prevpower = power
-    client.publish("home/kallio/phase/all/elproduction",json.dumps(totals), qos=0, retain=True)
+    client.publish(mqtt_broker.topic_prefix + "/phase/all/elproduction",json.dumps(totals), qos=0, retain=True)
 
 
 def processData(eldata):
@@ -153,7 +180,7 @@ def on_publish(client, userdata,result):
 
 
 msgqueue = Queue(maxsize=30)
-client = mqtt.Client("shelly_em")
+client = mqtt.Client("shelly_em_q")
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
