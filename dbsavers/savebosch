@@ -17,6 +17,39 @@ from influxdb_client.domain.write_precision import WritePrecision
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
+forcedSaveInterval = 900
+
+def Json2variables(jsonData, variables):
+    changed = False
+
+    for variable in variables:
+        if variable.type == 0:
+            val = float(jsonData[variable.name])
+            if variable.value != val:
+                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                variable.value = val
+                changed = True
+
+        elif variable.type == 1:
+            val = int(jsonData[variable.name])
+            if variable.value != val:
+                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                variable.value = val
+                changed = True
+
+        elif variable.type == 2:
+            val = bool(jsonData[variable.name])
+            if variable.value != val:
+                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                variable.value = val
+                changed = True
+
+        else:
+            print(datetime.now(), "unhandled variable type", variable.type,"for variable", variable.name)
+
+    return changed
+
+
 class dbvariable:
     def __init__(self, name, vartype):
         self.name = name
@@ -29,7 +62,6 @@ class dbvariable:
             self.value = False
         else:
             self.value = 0
-        
 
 class thermostat:
     def __init__(self, write_api, storage):
@@ -61,7 +93,7 @@ class thermostat:
             self.hc2seltemp = val
 
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > 300:
+        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
             GPIO.output(led, GPIO.LOW)
             self.lastsave = ts
             p = influxdb_client.Point("heatpump").tag("name","thermostat")
@@ -94,23 +126,10 @@ class boiler:
                           dbvariable("selburnpow",1)]
 
     def saveData(self, data):
-        for variable in self.variables:
-            if variable.type == 0:
-                val = float(data[variable.name])
-                if variable.value != val:
-                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
-                    variable.value = val
-                    self.changed = True
-
-            if variable.type == 1:
-                val = int(data[variable.name])
-                if variable.value != val:
-                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
-                    variable.value = val
-                    self.changed = True
+        self.changed = Json2variables(data,self.variables)
 
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > 300:
+        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
             GPIO.output(led, GPIO.LOW)
             self.lastsave = ts
             p = influxdb_client.Point("heatpump").tag("name","boiler")
@@ -140,41 +159,15 @@ class mixer:
                           dbvariable("pumpstatus", 2),
                           dbvariable("flowsettemp",0)]
 
-
-
     def saveData(self, data):
         if not (data.get(self.prefix) is None):
             subdata = data[self.prefix]
         else:
             return
-        for variable in self.variables:
-            if variable.type == 0:
-                val = float(subdata[variable.name])
-                if variable.value != val:
-                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
-                    variable.value = val
-                    self.changed = True
-                    
 
-            elif variable.type == 1:
-                val = int(subdata[variable.name])
-                if variable.value != val:
-                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
-                    variable.value = val
-                    self.changed = True
-
-            elif variable.type == 2:
-                val = bool(subdata[variable.name])
-                if variable.value != val:
-                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
-                    variable.value = val
-                    self.changed = True
-
-            else:
-                print(datetime.now(), "unhandled variable type", variable.type,"for variable", variable.name)        
-
+        self.changed = Json2variables(subdata,self.variables)
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > 300:
+        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
             self.lastsave = ts
             GPIO.output(led, GPIO.LOW)
             p = influxdb_client.Point("heatpump").tag("name","mixer")
