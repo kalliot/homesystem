@@ -1,0 +1,287 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import influxdb_client
+import json
+import sys
+import RPi.GPIO as GPIO
+from queue import Queue
+
+import influxdb_client
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+class dbvariable:
+    def __init__(self, name, vartype):
+        self.name = name
+        self.type = vartype 
+        if vartype == 0:
+            self.value = 0.0
+        elif vartype == 1:
+            self.value = 0
+        elif vartype == 2:    
+            self.value = False
+        else:
+            self.value = 0
+        
+
+class thermostat:
+    def __init__(self, write_api, storage):
+        self.write_api = write_api
+        self.storage = storage
+        self.changed = True
+        self.lastsave = 0
+        self.dampedoutdoortemp = 0.0
+        self.hc1seltemp = 0.0
+        self.hc2seltemp = 0.0
+
+    def saveData(self, data):
+        val = float(data['dampedoutdoortemp'])
+        if val != self.dampedoutdoortemp:
+            print(datetime.now(),"param dampedoutdoortemp changed from", self.dampedoutdoortemp,"to", val)
+            self.changed = True
+            self.dampedoutdoortemp = val
+
+        val = float(data['hc1']['seltemp'])
+        if val != self.hc1seltemp :
+            print(datetime.now(),"param hc1seltemp changed from", self.hc1seltemp,"to", val)
+            self.changed = True
+            self.hc1seltemp = val
+
+        val = float(data['hc2']['seltemp'])
+        if val != self.hc2seltemp:
+            print(datetime.now(),"param hc2seltemp changed from", self.hc2seltemp,"to", val)
+            self.changed = True
+            self.hc2seltemp = val
+
+        ts = int(time.time())
+        if self.changed or (ts - self.lastsave) > 300:
+            GPIO.output(led, GPIO.LOW)
+            self.lastsave = ts
+            p = influxdb_client.Point("heatpump").tag("name","thermostat")
+            p.time(ts,write_precision=WritePrecision.S)
+
+            p.field("dampedoutdoortemp", self.dampedoutdoortemp)
+            p.field("hc1seltemp", self.hc1seltemp)
+            p.field("hc2seltemp", self.hc2seltemp)
+            write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.changed = False
+            print(datetime.now(), "thermostat saved")
+            GPIO.output(led, GPIO.HIGH)
+        else:
+            print(datetime.now(), "thermostat data not changed")
+
+
+
+class boiler:
+    def __init__(self, write_api, storage):
+        self.write_api = write_api
+        self.storage = storage
+        self.changed = True
+        self.lastsave = 0
+        self.variables = [dbvariable("outdoortemp",0),
+                          dbvariable("curflowtemp",0),
+                          dbvariable("rettemp",0),
+                          dbvariable("hppower",1),
+                          dbvariable("absburnpow",1),
+                          dbvariable("curburnpow",1),
+                          dbvariable("selburnpow",1)]
+
+    def saveData(self, data):
+        for variable in self.variables:
+            if variable.type == 0:
+                val = float(data[variable.name])
+                if variable.value != val:
+                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                    variable.value = val
+                    self.changed = True
+
+            if variable.type == 1:
+                val = int(data[variable.name])
+                if variable.value != val:
+                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                    variable.value = val
+                    self.changed = True
+
+        ts = int(time.time())
+        if self.changed or (ts - self.lastsave) > 300:
+            GPIO.output(led, GPIO.LOW)
+            self.lastsave = ts
+            p = influxdb_client.Point("heatpump").tag("name","boiler")
+            p.time(ts,write_precision=WritePrecision.S)
+
+            for variable in self.variables:
+                p.field(variable.name, variable.value)
+
+            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.changed = False
+            print(datetime.now(), "boiler saved")
+            GPIO.output(led, GPIO.HIGH)
+        else:
+            print(datetime.now(), "boiler data not changed")
+
+
+class mixer:
+    def __init__(self, prefix, write_api, storage):
+        self.write_api = write_api
+        self.storage = storage
+        self.prefix = prefix
+        self.changed = True
+        self.lastsave = 0
+
+        self.variables = [dbvariable("flowtemphc", 0),
+                          dbvariable("valvestatus",1),
+                          dbvariable("pumpstatus", 2),
+                          dbvariable("flowsettemp",0)]
+
+
+
+    def saveData(self, data):
+        if not (data.get(self.prefix) is None):
+            subdata = data[self.prefix]
+        else:
+            return
+        for variable in self.variables:
+            if variable.type == 0:
+                val = float(subdata[variable.name])
+                if variable.value != val:
+                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                    variable.value = val
+                    self.changed = True
+                    
+
+            elif variable.type == 1:
+                val = int(subdata[variable.name])
+                if variable.value != val:
+                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                    variable.value = val
+                    self.changed = True
+
+            elif variable.type == 2:
+                val = bool(subdata[variable.name])
+                if variable.value != val:
+                    print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                    variable.value = val
+                    self.changed = True
+
+            else:
+                print(datetime.now(), "unhandled variable type", variable.type,"for variable", variable.name)        
+
+        ts = int(time.time())
+        if self.changed or (ts - self.lastsave) > 300:
+            self.lastsave = ts
+            GPIO.output(led, GPIO.LOW)
+            p = influxdb_client.Point("heatpump").tag("name","mixer")
+            p.time(ts,write_precision=WritePrecision.S)
+
+            for variable in self.variables:
+                p.field(self.prefix + variable.name, variable.value)
+
+            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.changed = False
+            print(datetime.now(), "mixer saved")
+            GPIO.output(led, GPIO.HIGH)
+        else:
+            print(datetime.now(), "mixer data not changed")    
+
+
+
+def saveData(recData):
+    global mixer1, mixer2, boiler1, thermostat1
+
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    if (item == "boiler_data"):
+        data = json.loads(recData.payload)
+        boiler1.saveData(data)
+
+    elif item == "thermostat_data":
+        data = json.loads(recData.payload)
+        thermostat1.saveData(data)
+
+    elif item == "mixer_data":
+        data = json.loads(recData.payload)
+        mixer1.saveData(data)
+        mixer2.saveData(data)
+
+    else:
+        print(datetime.now(), item, "not handled")    
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("ems-esp/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+led = 13
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
+
+msgqueue = Queue(maxsize=25)    
+pid = os.getpid()
+
+infclient = influxdb_client.InfluxDBClient(
+    url=influx_credentials.url,
+    token=influx_credentials.token,
+    org=influx_credentials.org
+)
+
+write_api = infclient.write_api(write_options=SYNCHRONOUS)
+
+
+mixer1 = mixer('hc1',write_api, "weekly")
+mixer2 = mixer('hc2',write_api, "weekly")
+boiler1 = boiler(write_api, "weekly")
+thermostat1 = thermostat(write_api, "weekly")
+
+
+client = mqtt.Client("influx_bosch_saver:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        saveData(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except:
+        raise
