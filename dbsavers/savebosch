@@ -20,40 +20,38 @@ from setup import *
 forcedSaveInterval = 900
 
 def Json2variables(jsonData, variables):
-    changed = False
-
     for variable in variables:
         if variable.type == 0:
             val = float(jsonData[variable.name])
             if variable.value != val:
-                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                print(datetime.now(),"param", variable.dispname , "changed from", variable.value,"to", val)
                 variable.value = val
-                changed = True
+                variable.changed = True
 
         elif variable.type == 1:
             val = int(jsonData[variable.name])
             if variable.value != val:
-                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
                 variable.value = val
-                changed = True
+                variable.changed = True
 
         elif variable.type == 2:
             val = bool(jsonData[variable.name])
             if variable.value != val:
-                print(datetime.now(),"param", variable.name, "changed from", variable.value,"to", val)
+                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
                 variable.value = val
-                changed = True
+                variable.changed = True
 
         else:
-            print(datetime.now(), "unhandled variable type", variable.type,"for variable", variable.name)
-
-    return changed
+            print(datetime.now(), "Error: unhandled variable type", variable.type,"for variable", variable.name)
 
 
 class dbvariable:
-    def __init__(self, name, vartype):
+    def __init__(self, name, dispname, vartype):
         self.name = name
+        self.dispname = dispname
         self.type = vartype 
+        self.changed = False
         if vartype == 0:
             self.value = 0.0
         elif vartype == 1:
@@ -63,51 +61,75 @@ class dbvariable:
         else:
             self.value = 0
 
+
+class thermostat_hc:
+    def __init__(self, postfix, write_api, storage):
+        self.write_api = write_api
+        self.storage = storage
+        self.lastsave = 0
+        self.postfix = postfix
+        self.variables = [dbvariable("seltemp",       "seltemp",              0),
+                          dbvariable("roominfluence", "roominfluence",        0),
+                          dbvariable("curroominfl",   "curroominfl",          0),
+                          dbvariable("remoteseltemp", "remoteseltemp",        0)]
+
+
+    def saveData(self, data):
+        changedCnt = 0
+        Json2variables(data,self.variables)
+        ts = int(time.time())
+        GPIO.output(led, GPIO.LOW)
+        p = influxdb_client.Point("heatpump").tag("name","thermostat_" + self.postfix)
+        if (ts - self.lastsave) > forcedSaveInterval:
+            for variable in self.variables:
+                p.field(variable.dispname, variable.value)
+                variable.changed = False
+            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.lastsave = ts
+            print(datetime.now(), "saved all thermostat", self.postfix, "variables by timeout")
+        else:
+            for variable in self.variables:
+                if variable.changed:
+                    p.field(variable.dispname, variable.value)
+                    variable.changed = False
+                    changedCnt += 1
+            if (changedCnt):
+                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                print(datetime.now(), "thermostat", self.postfix, "saved", changedCnt, "parameters")
+        GPIO.output(led, GPIO.HIGH)
+
+
 class thermostat:
     def __init__(self, write_api, storage):
         self.write_api = write_api
         self.storage = storage
-        self.changed = True
         self.lastsave = 0
-        self.dampedoutdoortemp = 0.0
-        self.hc1seltemp = 0.0
-        self.hc2seltemp = 0.0
+        self.variables = [dbvariable("dampedoutdoortemp", "dampedoutdoortemp",   0)]
+
 
     def saveData(self, data):
-        val = float(data['dampedoutdoortemp'])
-        if val != self.dampedoutdoortemp:
-            print(datetime.now(),"param dampedoutdoortemp changed from", self.dampedoutdoortemp,"to", val)
-            self.changed = True
-            self.dampedoutdoortemp = val
-
-        val = float(data['hc1']['seltemp'])
-        if val != self.hc1seltemp :
-            print(datetime.now(),"param hc1seltemp changed from", self.hc1seltemp,"to", val)
-            self.changed = True
-            self.hc1seltemp = val
-
-        val = float(data['hc2']['seltemp'])
-        if val != self.hc2seltemp:
-            print(datetime.now(),"param hc2seltemp changed from", self.hc2seltemp,"to", val)
-            self.changed = True
-            self.hc2seltemp = val
-
+        changedCnt = 0
+        Json2variables(data,self.variables)
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
-            GPIO.output(led, GPIO.LOW)
+        GPIO.output(led, GPIO.LOW)
+        p = influxdb_client.Point("heatpump").tag("name","thermostat")
+        if (ts - self.lastsave) > forcedSaveInterval:
+            for variable in self.variables:
+                p.field(variable.dispname, variable.value)
+                variable.changed = False
+            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
             self.lastsave = ts
-            p = influxdb_client.Point("heatpump").tag("name","thermostat")
-            p.time(ts,write_precision=WritePrecision.S)
-
-            p.field("dampedoutdoortemp", self.dampedoutdoortemp)
-            p.field("hc1seltemp", self.hc1seltemp)
-            p.field("hc2seltemp", self.hc2seltemp)
-            write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
-            self.changed = False
-            print(datetime.now(), "thermostat saved")
-            GPIO.output(led, GPIO.HIGH)
+            print(datetime.now(), "saved all thermostat variables by timeout")
         else:
-            print(datetime.now(), "thermostat data not changed")
+            for variable in self.variables:
+                if variable.changed:
+                    p.field(variable.dispname, variable.value)
+                    variable.changed = False
+                    changedCnt += 1
+            if (changedCnt):
+                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                print(datetime.now(), "thermostat saved", changedCnt, "parameters")
+        GPIO.output(led, GPIO.HIGH)
 
 
 
@@ -115,35 +137,54 @@ class boiler:
     def __init__(self, write_api, storage):
         self.write_api = write_api
         self.storage = storage
-        self.changed = True
         self.lastsave = 0
-        self.variables = [dbvariable("outdoortemp",0),
-                          dbvariable("curflowtemp",0),
-                          dbvariable("rettemp",0),
-                          dbvariable("hppower",1),
-                          dbvariable("absburnpow",1),
-                          dbvariable("curburnpow",1),
-                          dbvariable("selburnpow",1)]
+        self.variables = [dbvariable("outdoortemp", "outdoortemp",              0),
+                          dbvariable("curflowtemp", "curflowtemp",              0),
+                          dbvariable("rettemp",     "rettemp",                  0),
+                          dbvariable("hppower",     "hppower",                  1),
+                          dbvariable("absburnpow",  "absburnpow",               1),
+                          dbvariable("curburnpow",  "curburnpow",               1),
+                          dbvariable("selburnpow",  "selburnpow",               1),
+                          dbvariable("hptc0",       "heat_carreir_ret",         0),
+                          dbvariable("hptc1",       "heat_carrier_fwd",         0),
+                          dbvariable("hptc3",       "condencer_temp",           0),
+                          dbvariable("hptr1",       "compressor_temp",          0),
+                          dbvariable("hptr3",       "condencer_output_temp",    0),
+                          dbvariable("hptr4",       "evaporator_in_temp",       0),
+                          dbvariable("hptr5",       "compressor_in_temp",       0),
+                          dbvariable("hptr6",       "compressor_out_temp",      0),
+                          dbvariable("hptl2",       "air_in_temp",              0),
+                          dbvariable("hppl1",       "low_press_side_temp",      0),
+                          dbvariable("hpph1",       "high_pressure_side_temp",  0),
+                          dbvariable("hpcompspd",   "compressor_speed",         1),
+                          dbvariable("hpcircspd",   "circulation_pump_speed",   1),
+                          dbvariable("auxheatmix",  "auxheatmix",               0)]
 
     def saveData(self, data):
-        self.changed = Json2variables(data,self.variables)
+        changedCnt = 0
+        Json2variables(data,self.variables)
 
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
-            GPIO.output(led, GPIO.LOW)
-            self.lastsave = ts
-            p = influxdb_client.Point("heatpump").tag("name","boiler")
-            p.time(ts,write_precision=WritePrecision.S)
-
+        GPIO.output(led, GPIO.LOW)
+        p = influxdb_client.Point("heatpump").tag("name","boiler")
+        p.time(ts,write_precision=WritePrecision.S)
+        if (ts - self.lastsave) > forcedSaveInterval:
             for variable in self.variables:
-                p.field(variable.name, variable.value)
-
+                p.field(variable.dispname, variable.value)
+                variable.changed = False
             self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
-            self.changed = False
-            print(datetime.now(), "boiler saved")
-            GPIO.output(led, GPIO.HIGH)
+            self.lastsave = ts
+            print(datetime.now(), "saved all boiler variables by timeout")
         else:
-            print(datetime.now(), "boiler data not changed")
+            for variable in self.variables:
+                if variable.changed:
+                    p.field(variable.dispname, variable.value)
+                    variable.changed = False
+                    changedCnt += 1
+            if (changedCnt):
+                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                print(datetime.now(), "boiler saved", changedCnt, "parameters")
+        GPIO.output(led, GPIO.HIGH)
 
 
 class mixer:
@@ -151,38 +192,44 @@ class mixer:
         self.write_api = write_api
         self.storage = storage
         self.prefix = prefix
-        self.changed = True
         self.lastsave = 0
 
-        self.variables = [dbvariable("flowtemphc", 0),
-                          dbvariable("valvestatus",1),
-                          dbvariable("pumpstatus", 2),
-                          dbvariable("flowsettemp",0)]
+        self.variables = [dbvariable("flowtemphc",  "flowtemphc",   0),
+                          dbvariable("valvestatus", "valvestatus",  1),
+                          dbvariable("pumpstatus",  "pumpstatus",   2),
+                          dbvariable("flowsettemp", "flowsettemp",  0)]
 
     def saveData(self, data):
+        changedCnt = 0
+
         if not (data.get(self.prefix) is None):
             subdata = data[self.prefix]
         else:
             return
 
-        self.changed = Json2variables(subdata,self.variables)
+        Json2variables(subdata,self.variables)
         ts = int(time.time())
-        if self.changed or (ts - self.lastsave) > forcedSaveInterval:
-            self.lastsave = ts
-            GPIO.output(led, GPIO.LOW)
-            p = influxdb_client.Point("heatpump").tag("name","mixer")
-            p.time(ts,write_precision=WritePrecision.S)
+        GPIO.output(led, GPIO.LOW)
+        p = influxdb_client.Point("heatpump").tag("name","mixer")
+        p.time(ts,write_precision=WritePrecision.S)
 
+        if (ts - self.lastsave) > forcedSaveInterval:
             for variable in self.variables:
-                p.field(self.prefix + variable.name, variable.value)
-
+                p.field(self.prefix + variable.dispname, variable.value)
+                variable.changed = False
             self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
-            self.changed = False
-            print(datetime.now(), "mixer saved")
-            GPIO.output(led, GPIO.HIGH)
+            self.lastsave = ts
+            print(datetime.now(), "saved all mixer variables by timeout")
         else:
-            print(datetime.now(), "mixer data not changed")    
-
+            for variable in self.variables:
+                if variable.changed:
+                    p.field(self.prefix + variable.dispname, variable.value)
+                    variable.changed = False
+                    changedCnt += 1
+            if (changedCnt):
+                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                print(datetime.now(), "mixer saved", changedCnt, "parameters")
+        GPIO.output(led, GPIO.HIGH)
 
 
 def saveData(recData):
@@ -198,6 +245,8 @@ def saveData(recData):
     elif item == "thermostat_data":
         data = json.loads(recData.payload)
         thermostat1.saveData(data)
+        thermostat_hc1.saveData(data['hc1'])
+        thermostat_hc2.saveData(data['hc2'])
 
     elif item == "mixer_data":
         data = json.loads(recData.payload)
@@ -253,7 +302,8 @@ mixer1 = mixer('hc1',write_api, "weekly")
 mixer2 = mixer('hc2',write_api, "weekly")
 boiler1 = boiler(write_api, "weekly")
 thermostat1 = thermostat(write_api, "weekly")
-
+thermostat_hc1 = thermostat_hc('hc1', write_api, "weekly")
+thermostat_hc2 = thermostat_hc('hc2', write_api, "weekly")
 
 client = mqtt.Client("influx_bosch_saver:" + str(pid))
 client.on_connect = on_connect
