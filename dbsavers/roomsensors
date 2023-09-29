@@ -1,0 +1,265 @@
+#!/usr/bin/env python
+
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import influxdb_client
+import json
+import sys
+import RPi.GPIO as GPIO
+from queue import Queue, Empty
+
+import influxdb_client
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+forcedSaveInterval = 900
+
+
+def publishError(category, code, description):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "error",
+        "dev"     :      "roomsensors",
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/roomsensors"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+
+def getField(jsonData, varName, defValue):
+    try:
+        ret = jsonData[varName]
+    except:
+        ret = defValue
+        print(datetime.utcnow(), "Warning: failed to read json variable", varName)
+        publishError("json", 1002, "failed to read json variable:" + varName)
+    return ret
+
+
+def Json2variables(jsonData, variables):
+    for variable in variables:
+        if variable.type == 0:
+            val = float(getField(jsonData, variable.name, variable.value))
+            if variable.value != val:
+                print(datetime.now(),"param", variable.dispname , "changed from", variable.value,"to", val)
+                variable.value = val
+                variable.changed = True
+
+        elif variable.type == 1:
+            val = int(getField(jsonData, variable.name, variable.value))
+            if variable.value != val:
+                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
+                variable.value = val
+                variable.changed = True
+
+        elif variable.type == 2:
+            val = bool(getField(jsonData, variable.name, variable.value))
+            if variable.value != val:
+                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
+                if val:
+                    variable.value = 1
+                else:
+                    variable.value = 0
+                variable.changed = True
+
+        else:
+            print(datetime.now(), "Error: unhandled variable type", variable.type,"for variable", variable.name)
+
+
+class dbvariable:
+    def __init__(self, name, dispname, vartype):
+        self.name = name
+        self.dispname = dispname
+        self.type = vartype 
+        self.changed = False
+        if vartype == 0:
+            self.value = 0.0
+        elif vartype == 1:
+            self.value = 0
+        elif vartype == 2:    
+            self.value = 0
+        else:
+            self.value = 0
+
+class subsystem:
+    def __init__(self, point, name, write_api, storage):
+        self.write_api = write_api
+        self.storage = storage
+        self.point = point
+        self.lastsave = 0
+        self.name = name
+        self.variables = []
+
+    def saveByTimeout(self):
+        ts = int(time.time())
+        p = influxdb_client.Point(self.point).tag("name",self.name)
+        p.time(ts,write_precision=WritePrecision.S)
+        if (ts - self.lastsave) >= forcedSaveInterval:
+            GPIO.output(led, GPIO.LOW)
+            for variable in self.variables:
+                p.field(variable.dispname, variable.value)
+                variable.changed = False
+            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.lastsave = ts
+            print(datetime.now(), "saved all", self.point, ":", self.name, "variables by timeout")
+            GPIO.output(led, GPIO.HIGH)
+            return True
+        return False
+
+    def saveData(self, data):
+        changedCnt = 0
+        Json2variables(data, self.variables)
+        
+        if self.saveByTimeout() == False:
+            GPIO.output(led, GPIO.LOW)
+            ts = int(time.time())
+            p = influxdb_client.Point(self.point).tag("name",self.name)
+            p.time(ts,write_precision=WritePrecision.S)
+            for variable in self.variables:
+                if variable.changed:
+                    p.field(variable.dispname, variable.value)
+                    variable.changed = False
+                    changedCnt += 1
+            if (changedCnt):
+                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                print(datetime.now(), self.point, ":", self.name, "saved", changedCnt, "parameters")
+            GPIO.output(led, GPIO.HIGH)
+
+
+# sonoff snzb-02d temperature and humidity sensor
+class sonoff_snzb02d(subsystem):
+    def __init__(self, point, name, write_api, storage):
+        super().__init__(point, name, write_api, storage)
+        self.variables = [dbvariable("battery",         "battery",      1),
+                          dbvariable("humidity",        "humidity",     0),
+                          dbvariable("linkquality",     "linkquality",  1),
+                          dbvariable("temperature",     "temperature", 0)]
+
+
+
+def handleTopics(recData):
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    if (item == "makuuhuone"):
+        data = json.loads(recData.payload)
+        sleeproom.saveData(data)
+
+    elif item == "olohuone":
+        data = json.loads(recData.payload)
+        livingroom.saveData(data)
+
+    elif item == "bridge":
+        pass
+
+    elif item == "extensions":
+        pass
+
+    elif item == "groups":
+        pass
+
+    else:
+        print("unknown topic", item)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("zigbee2mqtt/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+led = 13
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
+
+msgqueue = Queue(maxsize=10)    
+pid = os.getpid()
+
+infclient = influxdb_client.InfluxDBClient(
+    url=influx_credentials.url,
+    token=influx_credentials.token,
+    org=influx_credentials.org
+)
+
+write_api = infclient.write_api(write_options=SYNCHRONOUS)
+
+
+livingroom = sonoff_snzb02d('roomsensor','livingroom',write_api, "weekly")
+sleeproom  = sonoff_snzb02d('roomsensor','sleeproom',write_api, "weekly")
+
+client = mqtt.Client("influx_room_saver:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+now = int(time.time())
+prevTimeout = now - (forcedSaveInterval - 3)
+waitTime = forcedSaveInterval
+
+while (True):
+    now = int(time.time())
+    elapsed = now - prevTimeout
+    if elapsed >= forcedSaveInterval:
+        prevTimeout = now
+        waitTime = forcedSaveInterval
+        print(datetime.now(), "timeout")
+        livingroom.saveByTimeout()
+        sleeproom.saveByTimeout()
+    else:    
+        waitTime = forcedSaveInterval - elapsed
+        if waitTime <= 0:
+            waitTime = 1
+
+    try:
+        data = msgqueue.get(block=True, timeout=waitTime)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except Empty:
+        pass
+
+    except:
+        raise
