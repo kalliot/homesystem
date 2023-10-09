@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-
 from datetime import datetime
 import paho.mqtt.client as mqtt 
 import os
@@ -191,8 +190,10 @@ def handleTopics(recData):
     elif item == "thermostat_data":
         data = json.loads(recData.payload)
         thermostat1.saveData(data)
-        thermostat_hc1.saveData(data['hc1'])
-        thermostat_hc2.saveData(data['hc2'])
+        if not (data.get('hc1') is None):
+            thermostat_hc1.saveData(data['hc1'])
+        if not (data.get('hc2') is None):
+            thermostat_hc2.saveData(data['hc2'])
 
     elif item == "mixer_data":
         data = json.loads(recData.payload)
