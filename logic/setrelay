@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import time
+import os
 from datetime import datetime
 from datetime import timezone
 import json
@@ -12,23 +13,35 @@ import sys
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
-currentprice = 300                             # is 3eur/kwh enough high price?
+sellprice = 300                             # is 3eur/kwh enough high price?
+taxedprice = 300
 currentconsumption = 0
 W15min = 0
 quart = 0
 avgconsumption = currentconsumption
 shellynumber = 1
-pricelimit = 12                                # in cents
 relayonminimum = 120                           # put is on minimum seconds
-heaterpower = 2000                             # load controlled by relay is about 2000W
 
+
+class heatSetup:
+    def __init__(self):
+        self.relayonminimum  = 120                           # put is on minimum seconds
+        self.eltype          = 'fixed'                       # el agreement, price is fixed c/kWh
+        self.elprice         = 7.8                           # fixed: real price. stock: buy commission
+        self.transferprice   = 6.5
+        self.elselcommission = 0.24
+        self.maxconsumption  = -6000                         # start heating of waterboiler, only if consumption is bigger than this.
+        self.heatoilprice    = 1.61                          # eur/liter
+
+hsetup = heatSetup()
 
 class heater:
-    def __init__(self, shellynumber, relay, low, hysteresis):
+    def __init__(self, shellynumber, relay, low, hysteresis, power):
         self.shellynumber = shellynumber
         self.relay = relay
         self.lowtemp = low
         self.hysteresis = hysteresis
+        self.power = power
         self.changets = int(time.time())
         self.state = False
 
@@ -51,12 +64,26 @@ class heater:
 
 
 
-burner   = heater(1, 3, 51.8, 0.4)
-elheater = heater(1, 0, 73.0, 2.0)
+burner   = heater(1, 3, 51.8, 0.4, 0)
+elheater2kw = heater(1, 0, 73.0, 2.0, 2000)
+elheater4kw = heater(1, 1, 55.0, 2.0, 4000)
 
 boilertempreader = "5bc674"
 boilertempsensor = "28b867746008f"
 boilertemp = 0.0
+
+
+def getJsonVar(source, name, defvalue):
+    try:
+        ret = source[name]
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
 
 
 def getJsonNumericVar(source, name, defvalue):
@@ -90,11 +117,40 @@ def publishError(category, code, description):
     except:
         print(datetime.utcnow(), "mqtt publish of error failed")
 
+# using avgconsumption, to put relay on more carelessly
+def elheaterOnByProduction(elHeater):
+    global avgconsumption, relayonminimum
+    global quart, boilertemp, W15min
+
+    timeleft = 900 - quart
+    remain = elHeater.power - avgconsumption
+    # avoid division by zero
+    if remain == 0:
+        remain = 1
+    result = (timeleft * remain / 3600) - W15min
+
+    if timeleft > relayonminimum and \
+        result < 5 and \
+        boilertemp <= elHeater.lowtemp:
+        elHeater.setState(True)
+    elif W15min < 0.0 or \
+        boilertemp >= (elHeater.lowtemp + elHeater.hysteresis):
+        elHeater.setState(False)
+
+def elheaterOn(elHeater):
+    global boilertemp
+
+    print(datetime.now(),"comparing is boilertemp",boilertemp,"<=", elHeater.lowtemp)
+    if boilertemp <= elHeater.lowtemp:
+        elHeater.setState(True)
+    if boilertemp >= (elHeater.lowtemp + elHeater.hysteresis):
+        elHeater.setState(False)
+
 
 def processData(eldata):
-    global currentprice, currentconsumption, boilertemp
-    global avgconsumption, pricelimit, W15min, quart
-    global relayonminimum, heaterpower, elheater
+    global taxedprice, sellprice, currentconsumption, boilertemp
+    global avgconsumption, W15min, quart
+    global relayonminimum, elheater2kw, elheater4kw
 
     if not (eldata.get('id') is None):
         id = eldata['id']
@@ -105,28 +161,41 @@ def processData(eldata):
                 publishError("datetime", 1001, "current prices timestamp is not valid:" + eldata['day'])
                 print(datetime.utcnow(),"current prices timestamp is not valid")
             else:
-                currentprice=int(eldata['notax'])
+                sellprice = float(eldata['notax'])
+                taxedprice = float(eldata['price'])
         
         elif id == 'heatsetup':
             print(datetime.utcnow(),"got heatsetup")
-            relayonminimum    = getJsonNumericVar(eldata, 'relayonminimum',     relayonminimum)
-            pricelimit        = getJsonNumericVar(eldata, 'pricelimit',         pricelimit)
-            burner.lowtemp    = getJsonNumericVar(eldata, 'burner_lowtemp',     burner.lowtemp)
-            burner.hysteresis = getJsonNumericVar(eldata, 'burner_hysteresis',  burner.hysteresis)
-            elheater.lowtemp  = getJsonNumericVar(eldata, 'elheater_lowtemp',   elheater.lowtemp)
-            elheater.hysteresis = getJsonNumericVar(eldata, 'elheater_hysteresis',  elheater.hysteresis)
+            hsetup.relayonminimum   = getJsonNumericVar(eldata, 'relayonminimum',   hsetup.relayonminimum)
+            hsetup.elselcommission  = getJsonNumericVar(eldata, 'elselcommission',  hsetup.elselcommission)
+            hsetup.transferprice    = getJsonNumericVar(eldata, 'eltransferprice',  hsetup.transferprice)
+            hsetup.eltype           = getJsonVar(eldata,        'eltype',           hsetup.eltype)
+            hsetup.elprice          = getJsonNumericVar(eldata, 'elprice',          hsetup.elprice)
+            hsetup.maxconsumption   = getJsonNumericVar(eldata, 'maxconsumption',   hsetup.maxconsumption)
+            hsetup.heatoilprice     = getJsonNumericVar(eldata, 'heatoilprice',     hsetup.heatoilprice)
+
+            burner.lowtemp          = getJsonNumericVar(eldata, 'burner_lowtemp',    burner.lowtemp)
+            burner.hysteresis       = getJsonNumericVar(eldata, 'burner_hysteresis', burner.hysteresis)
+            elheater2kw.lowtemp     = getJsonNumericVar(eldata, 'solelheater_lowtemp',  elheater2kw.lowtemp)
+            elheater2kw.hysteresis  = getJsonNumericVar(eldata, 'solelheater_hysteresis',elheater2kw.hysteresis)
+
+            elheater4kw.lowtemp     = getJsonNumericVar(eldata, 'stockelheater_lowtemp',  elheater4kw.lowtemp)
+            elheater4kw.hysteresis  = getJsonNumericVar(eldata, 'stockelheater_hysteresis',elheater4kw.hysteresis)
 
         elif id == "relay":
             contact = int(eldata['contact'])
             # we come here atleast when somebody clics relay states from
             # the relay buttons or from the cloud.
-            if contact == elheater.relay:
-                elheater.setState(eldata['state'])
+            if contact == elheater2kw.relay:
+                elheater2kw.setState(eldata['state'])
+
+            elif contact == elheater4kw.relay:
+                elheater4kw.setState(eldata['state'])
 
             elif contact == burner.relay:
                 burner.setState(eldata['state'])
 
-            elif contact == 1 or contact == 2:
+            elif contact == 1:
                 return    
 
             print(datetime.utcnow(), "received relay msg, setting", contact, "to", eldata['state'])
@@ -144,43 +213,46 @@ def processData(eldata):
             boilertemp = float(eldata['value'])
    
 
-    #-------------------------------------------------------------------
-    # At the moment I don't have stock price agreement, so, no handling
-    # of heating where price is low
-    #-------------------------------------------------------------------
-
-    # using avgconsumption, to put relay on more carelessly
     if boilertemp != 0.0: # value is something else than initial value
-        if currentprice < pricelimit:
-            timeleft = 900 - quart
-            remain = heaterpower - avgconsumption
-            # avoid division by zero
-            if remain == 0:
-                remain = 1
-            result = (timeleft * remain / 3600) - W15min
+        if hsetup.eltype == 'fixed':
+            elheater4kw.setState(False)
+            if sellprice < (hsetup.elprice + hsetup.transferprice):
+                elheaterOnByProduction(elheater2kw)
+            else:
+                # if price is high, dont care about consumption, just keep relay off.
+                elheater2kw.setState(False)
 
-            if timeleft > relayonminimum and \
-                result < 5 and \
-                boilertemp <= elheater.lowtemp:
-                elheater.setState(True)
-            elif W15min < 0.0 or \
-                boilertemp >= (elheater.lowtemp + elheater.hysteresis):
-                elheater.setState(False)
-        else:
-            # if price is high, dont care about consumption, just keep relay off.
-            elheater.setState(False)
+        if hsetup.eltype == 'stock':
+            nettoprice = taxedprice + hsetup.elprice + hsetup.transferprice
+            print(datetime.now(),"nettoprice:", nettoprice)
+            if sellprice < nettoprice:
+                elheaterOnByProduction(elheater2kw)
+            else:
+                elheater2kw.setState(False)
 
+            # next, heating with low electricity stock price
+            if elheater2kw.state == False and (hsetup.heatoilprice * 10) > nettoprice:
+                if avgconsumption > hsetup.maxconsumption: # note that both are negative values
+                    print(datetime.now(),"stock price is enough low for heating and there is not much load")
+                    elheaterOn(elheater4kw)
+                elif avgconsumption  < (hsetup.maxconsumption - elheater4kw.power):
+                    elheater4kw.setState(False)
+            else:
+                elheater4kw.setState(False)
+
+        # in case boiler temp drops too low, put the burner on anyway.
         if boilertemp <= burner.lowtemp:
             burner.setState(True)
 
         elif boilertemp >= (burner.lowtemp + burner.hysteresis):
             burner.setState(False)
 
-    print(datetime.now(),"price:", currentprice, end=", ")
+    print(datetime.now(),"price:", sellprice, end=", ")
     print("consumption:", currentconsumption, end=", ")
     print("avgconsumption:", avgconsumption, end=", ")
     print("boilertemp:", boilertemp, end=", ")
-    print("elstate:", elheater.state, end=", ")
+    print("elstate2kw:", elheater2kw.state, end=", ")
+    print("elstate4kw:", elheater4kw.state, end=", ")
     print("burnerstate:", burner.state)
 
 
@@ -212,7 +284,7 @@ def on_publish(client, userdata,result):
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client("setrelay" + str(elheater.relay) + ":" + str(burner.relay)) #create new instance
+client = mqtt.Client("setrelay" + str(elheater2kw.relay) + ":" + str(burner.relay) + str(os.getpid())) #create new instance
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -239,6 +311,7 @@ while True:
     except KeyboardInterrupt:
         client.disconnect()
         exit(0)
+
     except json.decoder.JSONDecodeError as e:
         print(datetime.utcnow(), "json:", e)
         print(datetime.utcnow(), data)

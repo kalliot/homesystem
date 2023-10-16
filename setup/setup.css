@@ -1,0 +1,28 @@
+.container {
+    width: 200px;
+    height: 26px;
+}
+
+input, select, textarea{
+    background-color: #aaaaaa
+}
+
+textarea:focus, input:focus {
+    background-color: #cccccc
+}
+
+.heatingOn {
+    background-color: red;
+}
+
+.heatingOff {
+    background-color: blue;
+}
+
+.needle {
+    position: relative;
+    left: 0;
+    width: 10px;
+    height: 4px;
+    background-color: red;
+}
