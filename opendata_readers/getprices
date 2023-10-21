@@ -2,18 +2,49 @@
 
 import time
 from datetime import datetime
-#from datetime import timezone
 import urllib.request
 import urllib.error
 import requests
-import json
 import os
+import json
 import sys
 import pytz
 import paho.mqtt.client as mqtt 
+import paho.mqtt.subscribe as subscribe
 
 sys.path.insert(1, '/home/pi/config')
 from setup import nordpool, mqtt_broker
+
+
+class priceStats:
+    def __init__(self, data, overPrice):
+        self.min  = 120
+        self.max  = -20
+        self.avg  = 0
+
+        hourCnt = 0
+        cnt = 0
+        sum = 0
+        now = int(time.time())
+        # first find out min,max and avg from those which are not overpriced.
+        for hour in data:
+            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+            if (ts > (now - 3600)):
+                hourCnt += 1
+                if hourCnt > 24:
+                    break
+                price = round(float(hour['PriceWithTax']) * 100, 2)
+                if price < overPrice:
+                    cnt += 1
+                    sum = sum + price
+                    if (price < self.min):
+                        self.min = price
+                    if (price > self.max):
+                        self.max = price
+
+        if sum != 0 and cnt > 0:
+            self.avg = sum / cnt
+
 
 
 def on_message(client, userdata, message):
@@ -29,7 +60,7 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print("connection failed, rc=",rc)            
+        print(datetime.now(),"connection failed, rc=",rc)       
         connected = False
 
 def on_disconnect(client, userdata, rc):
@@ -38,7 +69,7 @@ def on_disconnect(client, userdata, rc):
 def on_publish(client,userdata,result):
     pass
 
-def publishError(recData):
+def publishError(code, reason):
     now = int(time.time())
 
     jsonRec = {
@@ -46,15 +77,68 @@ def publishError(recData):
         "dev"     :      "spot-hinta",
         "ts"      :      now,
         "category":      "http",
-        "code"    :      recData.status_code,
-        "description" :  recData.reason
+        "code"    :      code,
+        "description" :  reason
     }
     topic = mqtt_broker.topic_prefix + "/error/elprice"
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
-        print("mqtt publish of error failed")
+        print(datetime.now(),"mqtt publish of error failed")
 
+
+def strTime(dateTime):
+    ts = int(datetime.fromisoformat(dateTime).timestamp())
+    return datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H")
+
+
+
+def findBoostHours(data, overPrice):
+    stats = priceStats(data, overPrice)
+    hourCnt = 0
+    cnt     = 0
+    price   = 0.0
+    prevprice = 0.0
+    times, prices, reasons = [], [], []
+
+    print(datetime.now(),"stats, min", stats.min, "max", stats.max, "avg", stats.avg)
+
+    for hour in data:
+        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+        if (ts > (now - 3600)):
+            hourCnt += 1
+            if hourCnt > 24:
+                break
+            price = round(float(hour['PriceWithTax']) * 100.0,2)
+
+            # minimum is almost always acceptable
+            # it cannot be the last, because we don't yet
+            # know is it going to decrease more.
+            if price == stats.min and hourCnt < 24:
+                s = strTime(hour["DateTime"])
+                times.append(s)
+                reasons.append('min')
+                prices.append(price)
+
+            # climbing over average level.
+            elif price > stats.avg and hourCnt > 1 and prevprice < stats.avg:
+                s = strTime(data[cnt-1]['DateTime'])
+                times.append(s)
+                reasons.append('avg')
+                prices.append(prevprice)
+
+            #price is increasing.
+            elif prevprice != 0 and (price / prevprice > 1.2):
+                s = strTime(data[cnt-1]['DateTime'])
+                times.append(s)
+                reasons.append('inc')
+                prices.append(prevprice)
+            prevprice = price
+        cnt += 1
+
+    topic = mqtt_broker.topic_prefix + "/elprice/boosthours"
+    result = {"id":"boosthours", "values": [{"time": t, "price": s, "reason": r} for t, s, r in zip(times, prices, reasons)]}
+    client.publish(topic, json.dumps(result), qos=0, retain=True)
 
 def queryCloud():
 
@@ -64,13 +148,26 @@ def queryCloud():
     except urllib.error.HTTPError  as e:
         ErrorInfo= e.read().decode()
         print('Error code: ', e.code, ErrorInfo)
+        publishError(e.code, ErrorInfo)
         sys.exit()
     except  urllib.error.URLError as e:
         ErrorInfo= e.read().decode()
-        print('Error code: ', e.code,ErrorInfo)
+        print('Error code: ', e.code, ErrorInfo)
+        publishError(e.code, ErrorInfo)
         sys.exit()
     return data
 
+
+# todo: what if topic heating/setup is empty?
+m = subscribe.simple(mqtt_broker.topic_prefix + "/heating/setup", hostname=mqtt_broker.address, msg_count=1)
+data = json.loads(m.payload)
+
+if data['eltype'] == 'stock':
+    stock_commission = float(data['elprice'])
+else:
+    stock_commission = 0.25
+
+pricelimit = float(data['heatoilprice']) * 10 - float(data['eltransferprice']) - stock_commission
 
 pid = os.getpid()
 client = mqtt.Client("nordpool reader" + str(pid)) #create new instance
@@ -90,6 +187,7 @@ for i in range(3):
     data = x.json()
     if x.status_code == 200:
         now = int(time.time())
+        findBoostHours(data, pricelimit) # heating oil price - transfer - commission from stock price
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
             if (ts > (now - 3600)):
@@ -112,13 +210,11 @@ for i in range(3):
                 }
 
                 msg = json.dumps(send_msg)
-                print(topic, msg)
                 client.publish(topic, msg, qos=0, retain=True)
         break
 
     else:
-        publishError(x)
+        publishError(x.status_code, x.reason)
         time.sleep(10)
 
-
-print("done.")
+print(datetime.now(),"done.")
