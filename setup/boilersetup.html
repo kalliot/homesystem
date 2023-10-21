@@ -176,6 +176,11 @@
                     $("#relaystate").css("background", obj.state ? "red" : "blue");
                 break;
 
+                case 2:  
+                    $('#stockheatstate').html(obj.state ? "On" : "Off");
+                    $("#stockheatstate").css("background", obj.state ? "red" : "blue");
+                break;
+
                 case 3:
                     $('#burnerstate').html(obj.state ? "On" : "Off");
                     $("#burnerstate").css("background", obj.state ? "red" : "blue");
@@ -316,7 +321,7 @@
                 </td>
                 <td><div class="container"><input type="range" 
                     min="55" 
-                    max="65" 
+                    max="72" 
                     step="0.1" 
                     id="stockElTempStartRange" 
                     oninput="connectSlider('#stockElTempStartRange','#stockelstart')">
@@ -373,6 +378,7 @@
             <table>
                 <tr><td>Oil burner state</td><td id="burnerstate"></td></tr>
                 <tr><td>Electric heater state</td><td id="relaystate"></td></tr>
+                <tr><td>Stock heater state</td><td id="stockheatstate"></td></tr>
                 <tr><td>Current electricity production avg/now</td><td id="currentpower"></td><td>W</td></tr>
                 <tr><td>Current electricity stock price notax/tax</td><td id="currentprice"></td><td>Cents</td></tr>
                 <tr><td>Boiler temperature now</td><td id="currtemp"></td><td>C</td></tr>
