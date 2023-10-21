@@ -91,10 +91,22 @@ def queryCloud():
 
     url = 'https://www.soliscloud.com:13333'
     req = url + CanonicalizedResource
-    return requests.post(req, data=Body, headers=header)
+    # add exception handling for requests.post!
+    try:
+        ret = requests.post(req, data=Body, headers=header)
+
+    except requests.exceptions.HTTPError as errh:
+        ret.status_code = 529
+        ret.reason = "Site is overloaded"
+
+    except requests.exceptions.ReadTimeout as errrt:
+        ret.status_code = 408
+        ret.reason = "Request timeout"
+
+    return ret
 
 
-def publishError(recData):
+def publishError(code, reason):
     now = int(time.time())
 
     jsonRec = {
@@ -102,8 +114,8 @@ def publishError(recData):
         "dev"     :      solis_credentials.serialnumber,
         "ts"      :      now,
         "category":      "http",
-        "code"    :      recData.status_code,
-        "description" :  recData.reason
+        "code"    :      code,
+        "description" :  reason
     }
     topic = mqtt_broker.topic_prefix + "/error/solarpower/" + solis_credentials.serialnumber
     try:
@@ -218,7 +230,7 @@ while True:
         if x.status_code == 200:
             waitTime = publishData(x.json())
         else:
-            publishError(x)
+            publishError(x.status_code, x.reason)
             waitTime = 60
     
     except KeyboardInterrupt:
