@@ -114,25 +114,27 @@ def findBoostHours(data, overPrice):
             # minimum is almost always acceptable
             # it cannot be the last, because we don't yet
             # know is it going to decrease more.
-            if price == stats.min and hourCnt < 24:
+            if price < overPrice and price == stats.min and hourCnt < 24:
                 s = strTime(hour["DateTime"])
                 times.append(s)
                 reasons.append('min')
                 prices.append(price)
 
             # climbing over average level.
-            elif price > stats.avg and hourCnt > 1 and prevprice < stats.avg:
+            elif prevprice < overPrice and price > stats.avg and hourCnt > 1 and prevprice < stats.avg:
                 s = strTime(data[cnt-1]['DateTime'])
-                times.append(s)
-                reasons.append('avg')
-                prices.append(prevprice)
+                if not s in times:
+                    times.append(s)
+                    reasons.append('avg')
+                    prices.append(prevprice)
 
             #price is increasing.
-            elif prevprice != 0 and (price / prevprice > 1.2):
+            elif prevprice < overPrice and prevprice != 0 and (price / prevprice > 1.2):
                 s = strTime(data[cnt-1]['DateTime'])
-                times.append(s)
-                reasons.append('inc')
-                prices.append(prevprice)
+                if not s in times:
+                    times.append(s)
+                    reasons.append('inc')
+                    prices.append(prevprice)
             prevprice = price
         cnt += 1
 
