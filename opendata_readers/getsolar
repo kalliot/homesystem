@@ -211,7 +211,7 @@ while True:
     print(datetime.now(), "sunrise",sunrise,"now",now,"sunset", sunset)
     if sunset < now or sunrise + 1800 > now:
         print(datetime.now(),"It is nighttime, dont query solarpanel data")
-        if (sunrise < now):
+        if ((sunrise + 1800) < now):
             waitTime = sunrise + 86400 + 1800 - now # we are in the evening, sunrise is actually this morning
         else:                                       # Using this morning to estimate tomorrow sunrise.
             waitTime = sunrise + 1800 - now         # Day has changed, midnight has passed, sunrise is exact.

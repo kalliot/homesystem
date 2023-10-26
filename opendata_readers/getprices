@@ -15,6 +15,7 @@ import paho.mqtt.subscribe as subscribe
 sys.path.insert(1, '/home/pi/config')
 from setup import nordpool, mqtt_broker
 
+pricelimit = 1.0 # if no setup is got, this is so low, that no boosthours are generated
 
 class priceStats:
     def __init__(self, data, overPrice):
@@ -48,7 +49,16 @@ class priceStats:
 
 
 def on_message(client, userdata, message):
-    print(message.payload)
+    global pricelimit
+
+    stock_commission = 0.25
+
+    data = json.loads(message.payload)
+    if data['eltype'] == 'stock':
+        stock_commission = float(data['elprice'])
+
+    pricelimit = float(data['heatoilprice']) * 10 - float(data['eltransferprice']) - stock_commission
+
 
 
 def logger(client, userdata, level, buff):
@@ -99,7 +109,7 @@ def findBoostHours(data, overPrice):
     cnt     = 0
     price   = 0.0
     prevprice = 0.0
-    times, prices, reasons = [], [], []
+    times, prices, reasons, tstamps = [], [], [], []
 
     print(datetime.now(),"stats, min", stats.min, "max", stats.max, "avg", stats.avg)
 
@@ -118,6 +128,7 @@ def findBoostHours(data, overPrice):
                 s = strTime(hour["DateTime"])
                 times.append(s)
                 reasons.append('min')
+                tstamps.append(ts)
                 prices.append(price)
 
             # climbing over average level.
@@ -125,6 +136,7 @@ def findBoostHours(data, overPrice):
                 s = strTime(data[cnt-1]['DateTime'])
                 if not s in times:
                     times.append(s)
+                    tstamps.append(ts)
                     reasons.append('avg')
                     prices.append(prevprice)
 
@@ -133,13 +145,14 @@ def findBoostHours(data, overPrice):
                 s = strTime(data[cnt-1]['DateTime'])
                 if not s in times:
                     times.append(s)
+                    tstamps.append(ts)
                     reasons.append('inc')
                     prices.append(prevprice)
             prevprice = price
         cnt += 1
 
     topic = mqtt_broker.topic_prefix + "/elprice/boosthours"
-    result = {"id":"boosthours", "values": [{"time": t, "price": s, "reason": r} for t, s, r in zip(times, prices, reasons)]}
+    result = {"id":"boosthours", "ts": int(time.time()), "values": [{"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)]}
     client.publish(topic, json.dumps(result), qos=0, retain=True)
 
 def queryCloud():
@@ -160,16 +173,6 @@ def queryCloud():
     return data
 
 
-# todo: what if topic heating/setup is empty?
-m = subscribe.simple(mqtt_broker.topic_prefix + "/heating/setup", hostname=mqtt_broker.address, msg_count=1)
-data = json.loads(m.payload)
-
-if data['eltype'] == 'stock':
-    stock_commission = float(data['elprice'])
-else:
-    stock_commission = 0.25
-
-pricelimit = float(data['heatoilprice']) * 10 - float(data['eltransferprice']) - stock_commission
 
 pid = os.getpid()
 client = mqtt.Client("nordpool reader" + str(pid)) #create new instance
@@ -180,9 +183,12 @@ client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
 print(datetime.now(), "Start")
 client.loop_start()
+client.subscribe(mqtt_broker.topic_prefix + "/heating/setup")
+
+# wait to get setup before query.
+time.sleep(1)
 
 cnt = 0
-
 for i in range(3):
     x = queryCloud()
 
