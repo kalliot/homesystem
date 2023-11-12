@@ -19,10 +19,17 @@ from setup import *
 # 2271.24707 milliliters
 # 2271.24707 / 3600 = 0.63090196 = Milliliters per second.
 mLitersPerSec = 0.63090196
-boilerSensors = "esp5bc674"
+
+boilerSensors = "esp5bcae4"
 burnerGpio = "33"
-boilerTemp = "28b867746008f"
-waterTemp = "28e1747360083"
+
+boilerTemp =    "28b867746008f"
+waterTemp =     "28e1747360083"
+espTemp =       "288f83a130097"
+boilerBottom =  "28eb1f574e13cb0"
+boilerCenter =  "281672574e13c75"
+
+
 shellynumber = 1
 
 def saveTemperature(write_api, data, ts):
@@ -32,12 +39,23 @@ def saveTemperature(write_api, data, ts):
 
     if data['sensor'] == boilerTemp:
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
-        text = "boilerTemp"
+        text = "boiler"
     if data['sensor'] == waterTemp:
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("hotWaterTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "hotWater"
-    write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-    print(datetime.now(), text + "temperature:", temperature, "delay:",ts - datats)
+    if data['sensor'] == espTemp:
+        p = influxdb_client.Point("boiler").tag("name", "temperatures").field("espTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        text = "boilerEsp"
+    if data['sensor'] == boilerBottom:
+        p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerBottomTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        text = "boilBottom"
+    if data['sensor'] == boilerCenter:
+        p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerCenterTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        text = "boilerCenter"
+
+    if text != "":
+        write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+        print(datetime.now(), text + "temperature:", temperature, "delay:",ts - datats)
 
 
 def saveState(write_api, data, ts):

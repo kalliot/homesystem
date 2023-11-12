@@ -1,6 +1,6 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
-    <title>Homesystem setup</title>
+    <title>Setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="mqttws31.js" type="text/javascript"></script>
     <script src="jquery.min.js" type="text/javascript"></script>
@@ -68,7 +68,7 @@
         mqtt.subscribe("home/kallio/elprice/current");
         mqtt.subscribe("home/kallio/phase/all/elproduction");
         mqtt.subscribe("home/kallio/error/#");
-        mqtt.subscribe("home/kallio/esp5bc674/parameters/temperature/28b867746008f");
+        mqtt.subscribe("home/kallio/esp5bcae4/parameters/temperature/#");
 
         $('#topic').val(topic);
         var d = new Date();
@@ -201,10 +201,17 @@
         }
         if (obj.id == "temperature")
         {
-            $('#currtemp').html(obj.value);
-            setNeedle(obj.value,'#solElTempStartRange','#solelneedle')
-            setNeedle(obj.value,'#stockElTempStartRange','#stockelneedle')
-            setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
+            if (obj.sensor == "28b867746008f")
+            {
+                $('#currtemp').html(obj.value);
+                setNeedle(obj.value,'#solElTempStartRange','#solelneedle')
+                setNeedle(obj.value,'#stockElTempStartRange','#stockelneedle')
+            }
+            if (obj.sensor == "281672574e13c75")
+            {
+                $('#centertemp').html(obj.value);
+                setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
+            }
         }
 
         if (obj.id == "solarerror")
@@ -342,7 +349,7 @@
                 </td>              
             </tr>
 
-            <tr><td><label for="burnerstart">Temperatures for oil burner:</label></td>
+            <tr><td><label for="burnerstart">Center temperatures for oil burner:</label></td>
                 <td><input type="text" 
                            id="burnerstart" 
                            size=3 
@@ -381,7 +388,9 @@
                 <tr><td>Stock heater state</td><td id="stockheatstate"></td></tr>
                 <tr><td>Current electricity production avg/now</td><td id="currentpower"></td><td>W</td></tr>
                 <tr><td>Current electricity stock price notax/tax</td><td id="currentprice"></td><td>Cents</td></tr>
-                <tr><td>Boiler temperature now</td><td id="currtemp"></td><td>C</td></tr>
+                <tr><td>Boiler top temperature</td><td id="currtemp"></td><td>C</td></tr>
+                <tr><td>Boiler center temperature</td><td id="centertemp"></td><td>C</td></tr>
+                <tr><td><a href="statusdisplay.html">Status display</a><td></tr>
             </table>
         </td>
         </tr></table>
