@@ -12,14 +12,15 @@ import pytz
 import paho.mqtt.client as mqtt 
 import paho.mqtt.subscribe as subscribe
 
-sys.path.insert(1, '/home/pi/config')
+sys.path.insert(1, '../config')
 from setup import nordpool, mqtt_broker
 
 pricelimit = 1.0 # if no setup is got, this is so low, that no boosthours are generated
+compressor_pricelimit = 1.0
 
 class priceStats:
     def __init__(self, data, overPrice):
-        self.min  = 120
+        self.min  = 320
         self.max  = -20
         self.avg  = 0
 
@@ -49,7 +50,7 @@ class priceStats:
 
 
 def on_message(client, userdata, message):
-    global pricelimit
+    global pricelimit,compressor_pricelimit
 
     stock_commission = 0.25
 
@@ -58,7 +59,7 @@ def on_message(client, userdata, message):
         stock_commission = float(data['elprice'])
 
     pricelimit = float(data['heatoilprice']) * 10 - float(data['eltransferprice']) - stock_commission
-
+    compressor_pricelimit = float(data['heatoilprice']) * 30 - float(data['eltransferprice']) - stock_commission
 
 
 def logger(client, userdata, level, buff):
@@ -100,6 +101,121 @@ def publishError(code, reason):
 def strTime(dateTime):
     ts = int(datetime.fromisoformat(dateTime).timestamp())
     return datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H")
+
+
+def findHeatPumpCheapHours(data, overPrice):
+    stats = priceStats(data, overPrice)
+    hourCnt = 0
+    cnt     = 0
+    price   = 0.0
+    prevprice = 0.0
+    times, prices, reasons, tstamps = [], [], [], []
+
+    print(datetime.now(),"stats, min", stats.min, "max", stats.max, "avg", stats.avg)
+
+    for hour in data:
+        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+        if (ts > (now - 3600)):
+            hourCnt += 1
+            #if hourCnt > 24:
+            #    break
+            price = round(float(hour['PriceWithTax']) * 100.0,2)
+
+            # minimum is almost always acceptable
+            # it cannot be the last, because we don't yet
+            # know is it going to decrease more.
+            if price < overPrice and price == stats.min: #and hourCnt < 24:
+                s = strTime(hour["DateTime"])
+                times.append(s)
+                reasons.append('min')
+                tstamps.append(ts)
+                prices.append(price)
+
+            # climbing over average level.
+            elif prevprice < overPrice and price > stats.avg and hourCnt > 1 and prevprice < stats.avg:
+                s = strTime(data[cnt-1]['DateTime'])
+                if not s in times:
+                    times.append(s)
+                    tstamps.append(ts)
+                    reasons.append('avg')
+                    prices.append(prevprice)
+
+            #price is increasing.
+            elif prevprice < overPrice and prevprice != 0 and (price / prevprice > 1.2):
+                s = strTime(data[cnt-1]['DateTime'])
+                if not s in times:
+                    times.append(s)
+                    tstamps.append(ts)
+                    reasons.append('inc')
+                    prices.append(prevprice)
+            prevprice = price
+        cnt += 1
+
+    topic = mqtt_broker.topic_prefix + "/elprice/awhightemp"
+    result = {
+                "id":"awhightemp", "ts": int(time.time()), "values": [
+                    {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)
+                ]
+             }
+    print(topic,json.dumps(result))
+    client.publish(topic, json.dumps(result), qos=0, retain=True)
+
+
+def findHeatPumpExpensiveHours(data, overPrice):
+    stats = priceStats(data, overPrice)
+    hourCnt = 0
+    cnt     = 0
+    price   = 0.0
+    prevprice = 0.0
+    times, prices, reasons, tstamps = [], [], [], []
+
+    print(datetime.now(),"stats, min", stats.min, "max", stats.max, "avg", stats.avg)
+
+    for hour in data:
+        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
+        if (ts > (now - 3600)):
+            hourCnt += 1
+            #if hourCnt > 24:
+            #    break
+            price = round(float(hour['PriceWithTax']) * 100.0,2)
+
+            print("prevprice",prevprice,"price", price)
+            if prevprice != 0:
+                if price == 0:
+                    priceratio = prevprice / 0.001
+                else:
+                    priceratio = prevprice / price
+
+            # minimum is almost always acceptable
+            # it cannot be the last, because we don't yet
+            # know is it going to decrease more.
+            if price < overPrice and price == stats.max: #and hourCnt < 24:
+                s = strTime(hour["DateTime"])
+                times.append(s)
+                reasons.append('max')
+                tstamps.append(ts)
+                prices.append(price)
+
+            #price is decreasing.
+
+            elif prevprice < overPrice and prevprice != 0 and (priceratio > 1.2):
+                s = strTime(data[cnt-1]['DateTime'])
+                if not s in times:
+                    times.append(s)
+                    tstamps.append(ts)
+                    reasons.append('dec')
+                    prices.append(prevprice)
+            prevprice = price
+        cnt += 1
+
+    topic = mqtt_broker.topic_prefix + "/elprice/awlowtemp"
+    result = {
+                "id":"awlowtemp", "ts": int(time.time()), "values": [
+                    {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)
+                ]
+             }
+    print(topic,json.dumps(result))
+    client.publish(topic, json.dumps(result), qos=0, retain=True)
 
 
 
@@ -196,6 +312,8 @@ for i in range(3):
     if x.status_code == 200:
         now = int(time.time())
         findBoostHours(data, pricelimit) # heating oil price - transfer - commission from stock price
+        findHeatPumpCheapHours(data, compressor_pricelimit)
+        findHeatPumpExpensiveHours(data, compressor_pricelimit)
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
             if (ts > (now - 3600)):
