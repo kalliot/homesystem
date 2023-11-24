@@ -5,15 +5,15 @@ from datetime import datetime
 import paho.mqtt.client as mqtt 
 import os
 import time
-import influxdb_client
 import json
 import sys
 import RPi.GPIO as GPIO
 from queue import Queue, Empty
 
 import influxdb_client
-from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
+from influxdb_client.client.write_api import SYNCHRONOUS
+
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
@@ -39,45 +39,6 @@ def publishError(category, code, description):
         print(datetime.utcnow(), "mqtt publish of error failed")
 
 
-def getField(jsonData, varName, defValue):
-    try:
-        ret = jsonData[varName]
-    except:
-        ret = defValue
-        print(datetime.utcnow(), "Warning: failed to read json variable", varName)
-        publishError("json", 1002, "failed to read json variable:" + varName)
-    return ret
-
-
-def Json2variables(jsonData, variables):
-    for variable in variables:
-        if variable.type == 0:
-            val = float(getField(jsonData, variable.name, variable.value))
-            if variable.value != val:
-                print(datetime.now(),"param", variable.dispname , "changed from", variable.value,"to", val)
-                variable.value = val
-                variable.changed = True
-
-        elif variable.type == 1:
-            val = int(getField(jsonData, variable.name, variable.value))
-            if variable.value != val:
-                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
-                variable.value = val
-                variable.changed = True
-
-        elif variable.type == 2:
-            val = bool(getField(jsonData, variable.name, variable.value))
-            if variable.value != val:
-                print(datetime.now(),"param", variable.dispname, "changed from", variable.value,"to", val)
-                if val:
-                    variable.value = 1
-                else:
-                    variable.value = 0
-                variable.changed = True
-
-        else:
-            print(datetime.now(), "Error: unhandled variable type", variable.type,"for variable", variable.name)
-
 
 class dbvariable:
     def __init__(self, name, dispname, vartype):
@@ -94,37 +55,85 @@ class dbvariable:
         else:
             self.value = 0
 
+
 class subsystem:
-    def __init__(self, point, name, write_api, storage):
+    def __init__(self, point, name, write_api, storage, org, led):
         self.write_api = write_api
         self.storage = storage
         self.point = point
         self.lastsave = 0
         self.name = name
+        self.led = led
+        self.org = org
         self.variables = []
+
+
+    def showError(self, text):
+        print(datetime.utcnow(), text)
+
+
+    def getField(self, jsonData, varName, defValue):
+        if not (jsonData.get(varName) is None):
+            ret = jsonData[varName]
+        else:
+            ret = defValue
+            self.showError("Warning: failed to read json variable " + varName)
+            
+        return ret
+
+
+    def Json2variables(self, jsonData):
+        for variable in self.variables:
+            if variable.type == 0:
+                val = float(self.getField(jsonData, variable.name, variable.value))
+                if variable.value != val:
+                    print(datetime.now(),self.name , ":", variable.dispname ,  variable.value,"->", val)
+                    variable.value = val
+                    variable.changed = True
+
+            elif variable.type == 1:
+                val = int(self.getField(jsonData, variable.name, variable.value))
+                if variable.value != val:
+                    print(datetime.now(),self.name, ":", variable.dispname, variable.value,"->", val)
+                    variable.value = val
+                    variable.changed = True
+
+            elif variable.type == 2:
+                val = bool(self.getField(jsonData, variable.name, variable.value))
+                if variable.value != val:
+                    print(datetime.now(),self.name, ":", variable.dispname, variable.value,"->", val)
+                    if val:
+                        variable.value = 1
+                    else:
+                        variable.value = 0
+                    variable.changed = True
+
+            else:
+                print(datetime.now(), "Error: unhandled variable type", variable.type,"for variable", self.name,":",variable.name)
+
 
     def saveByTimeout(self):
         ts = int(time.time())
         p = influxdb_client.Point(self.point).tag("name",self.name)
         p.time(ts,write_precision=WritePrecision.S)
         if (ts - self.lastsave) >= forcedSaveInterval:
-            GPIO.output(led, GPIO.LOW)
+            GPIO.output(self.led, GPIO.LOW)
             for variable in self.variables:
                 p.field(variable.dispname, variable.value)
                 variable.changed = False
-            self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+            self.write_api.write(bucket=self.storage, org=self.org, record=p)
             self.lastsave = ts
             print(datetime.now(), "saved all", self.point, ":", self.name, "variables by timeout")
-            GPIO.output(led, GPIO.HIGH)
+            GPIO.output(self.led, GPIO.HIGH)
             return True
         return False
 
-    def saveData(self, data):
+
+    def saveData(self):
         changedCnt = 0
-        Json2variables(data, self.variables)
         
         if self.saveByTimeout() == False:
-            GPIO.output(led, GPIO.LOW)
+            GPIO.output(self.led, GPIO.LOW)
             ts = int(time.time())
             p = influxdb_client.Point(self.point).tag("name",self.name)
             p.time(ts,write_precision=WritePrecision.S)
@@ -134,19 +143,23 @@ class subsystem:
                     variable.changed = False
                     changedCnt += 1
             if (changedCnt):
-                self.write_api.write(bucket=self.storage, org=influx_credentials.org, record=p)
+                self.write_api.write(bucket=self.storage, org=self.org, record=p)
                 print(datetime.now(), self.point, ":", self.name, "saved", changedCnt, "parameters")
-            GPIO.output(led, GPIO.HIGH)
+            GPIO.output(self.led, GPIO.HIGH)
+
 
 
 # sonoff snzb-02d temperature and humidity sensor
 class sonoff_snzb02d(subsystem):
-    def __init__(self, point, name, write_api, storage):
-        super().__init__(point, name, write_api, storage)
+    def __init__(self, point, name, write_api, storage, org, led):
+        super().__init__(point, name, write_api, storage, org, led)
         self.variables = [dbvariable("battery",         "battery",      1),
                           dbvariable("humidity",        "humidity",     0),
                           dbvariable("linkquality",     "linkquality",  1),
                           dbvariable("temperature",     "temperature", 0)]
+
+    def showError(self, varName): # overriding parents showError
+        publishError("json", 1002, "failed to read json field " + varName)
 
 
 
@@ -156,11 +169,38 @@ def handleTopics(recData):
 
     if (item == "makuuhuone"):
         data = json.loads(recData.payload)
-        sleeproom.saveData(data)
+        sleeproom.Json2variables(data)
+        sleeproom.saveData()
 
     elif item == "olohuone":
         data = json.loads(recData.payload)
-        livingroom.saveData(data)
+        livingroom.Json2variables(data)
+        livingroom.saveData()
+
+    elif item == "sallan_huone":
+        data = json.loads(recData.payload)
+        sallaroom.Json2variables(data)
+        sallaroom.saveData()
+
+    elif item == "santerin_huone":
+        data = json.loads(recData.payload)
+        santeriroom.Json2variables(data)
+        santeriroom.saveData()
+
+    elif item == "nurkkahuone":
+        data = json.loads(recData.payload)
+        cornerroom.Json2variables(data)
+        cornerroom.saveData()
+
+    elif item == "varasto":
+        data = json.loads(recData.payload)
+        store.Json2variables(data)
+        store.saveData()
+
+    elif item == "keittio":
+        data = json.loads(recData.payload)
+        kitchen.Json2variables(data)
+        kitchen.saveData()
 
     elif item == "bridge":
         pass
@@ -217,8 +257,13 @@ infclient = influxdb_client.InfluxDBClient(
 write_api = infclient.write_api(write_options=SYNCHRONOUS)
 
 
-livingroom = sonoff_snzb02d('roomsensor','livingroom',write_api, "weekly")
-sleeproom  = sonoff_snzb02d('roomsensor','sleeproom',write_api, "weekly")
+livingroom  = sonoff_snzb02d('roomsensor','livingroom',write_api, "weekly",influx_credentials.org, led)
+sleeproom   = sonoff_snzb02d('roomsensor','sleeproom',write_api, "weekly",influx_credentials.org, led)
+sallaroom   = sonoff_snzb02d('roomsensor','sallaroom',write_api, "weekly",influx_credentials.org, led)
+santeriroom = sonoff_snzb02d('roomsensor','santeriroom',write_api, "weekly",influx_credentials.org, led)
+cornerroom  = sonoff_snzb02d('roomsensor','cornerroom',write_api, "weekly",influx_credentials.org, led)
+store       = sonoff_snzb02d('roomsensor','store',write_api, "weekly",influx_credentials.org, led)
+kitchen     = sonoff_snzb02d('roomsensor','kitchen',write_api, "weekly",influx_credentials.org, led)
 
 client = mqtt.Client("influx_room_saver:" + str(pid))
 client.on_connect = on_connect
