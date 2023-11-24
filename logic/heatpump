@@ -1,0 +1,359 @@
+#!/usr/bin/env python
+
+# Asetetaan lattiakierron lämpö:
+# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/thermostat/hc2/seltemp' -m 21.5
+#
+# Asetetaan patterikierron lämpö
+# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/thermostat/seltemp' -m 21.5 
+#
+# aux heater only = true => kompressori pysähtyy ja järjestelmä vääntää kattilan shunttia auki.
+#  Vesi kuitenkin kiertää ulkoyksikössä aina. Joten ei jäätymisvaaraa.
+# olisikohan viesti seuraava:
+# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/boiler/auxheateronly' -m true
+
+# rules:
+# Change to aux heater only, if electricity total price goes raises: (3  * oilprice) < (stock + commission + transfer)
+# situation now 17.11.2023 is: (3 * 14.50) < (x + 0.40 + 6.5)
+#                          -> x = (3 * 14.50) - 0.40 - 6.5
+#                          -> x = 36.6 cents
+
+
+# These changes should not be done very frequently, max speed should be, let's say once a hour.
+# Compressor machines don't like rapid changes.
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import json
+import sys
+from queue import Queue
+
+
+sys.path.insert(1, '../config')
+from setup import *
+
+desiredroomtemp = 22.0
+desiredfloortemp = 22.0
+outtemp = 0.0
+auxonly = False
+hitemphours = []
+lotemphours = []
+taxedprice = 0.0
+
+class cop_calculator:
+    def __init__(self):
+        # temperatures in kelvin. This is easier, since they are never negative.
+        self.temps = [243.0, 253.0 ,263.0, 280.0, 293.0] # -30C, -20C, -10C, 7C, 20C
+        self.cops =  [  1.0,  1.65, 2.1, 3.3, 4.0  ]
+
+    def get(self, currtemp):
+        retcop = 3.0
+        currtemp += 273 # in kelvins
+        if currtemp < self.temps[0]:
+            currtemp = self.temps[0] + 1
+        for i in range(len(self.temps)):
+            if self.temps[i] > currtemp:
+                starttemp = self.temps[i-1] 
+                stoptemp  = self.temps[i]   
+                startcop = self.cops[i-1]   
+                if (starttemp == currtemp):
+                    retcop = startcop
+                else:
+                    stopcop = self.cops[i]      
+                    tempdiff = stoptemp - starttemp  
+                    copdiff = stopcop - startcop     
+                    factor = (currtemp - starttemp) / tempdiff
+                    retcop = round(factor * copdiff + startcop,2)
+                break
+
+        print(datetime.utcnow(),"factor=",round(factor,2),"copdiff=",round(copdiff,2),"cop=",round(retcop,2))
+        return retcop
+
+
+class temperature:
+    def __init__(self, topic):
+        self.topic = topic
+        self.changed = 0
+        self.value = 0
+
+    def set(self, val):
+        self.value = val
+
+    def change(self, newval):
+
+        if newval == self.value:
+            return
+
+        now = int(time.time())
+        diff = now - self.changed
+        if diff < 3600:
+            print(datetime.utcnow(),"prev change is too fresh,",diff, "not changing")
+            return
+
+        print(datetime.utcnow(),self.topic, newval)    
+        client.publish(self.topic, newval, qos=0, retain=True)
+        time.sleep(1)  # send consecutive relay orders with 1 sec delay
+        self.changed = now 
+
+
+class heatSetup:
+    def __init__(self):
+        self.eltype          = 'fixed'                       # el agreement, price is fixed c/kWh
+        self.elprice         = 7.8                           # fixed: real price. stock: buy commission
+        self.transferprice   = 6.5
+        self.heatoilprice    = 1.61                          # eur/liter
+
+hsetup = heatSetup()
+floortemp = temperature('ems-esp/thermostat/hc2/seltemp')
+roomtemp = temperature('ems-esp/thermostat/seltemp')
+cop = cop_calculator()
+
+
+def checkHiTemp():
+    current_date = datetime.utcnow().strftime("%Y%m%d%H")
+
+    for cd in hitemphours:
+        print(datetime.utcnow(),"comparing",current_date,"==",cd)
+        if current_date == cd:
+            print(datetime.utcnow(),"HiTemp is active")
+            return True
+
+    print(datetime.utcnow(),"HiTemp is passive")
+    return False
+
+
+def checkLoTemp():
+    current_date = datetime.utcnow().strftime("%Y%m%d%H")
+
+    for cd in lotemphours:
+        print(datetime.utcnow(),"comparing",current_date,"==",cd)
+        if current_date == cd:
+            print(datetime.utcnow(),"LoTemp is active")
+            return True
+
+    print(datetime.utcnow(),"LoTemp is passive")
+    return False
+
+
+def publishError(category, code, description):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "error",
+        "dev"     :      "heatpump",
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/ems-esp"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+
+def getJsonVar(source, name, defvalue):
+    try:
+        ret = source[name]
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
+
+
+def getJsonNumericVar(source, name, defvalue):
+    try:
+        ret = float(source[name])
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
+
+
+def setAuxHeater(state):
+    global auxonly
+
+    if auxonly == state:
+        return
+
+    topic = "ems-esp/boiler/auxheateronly"
+    #client.publish(topic,state, qos=0, retain=True)
+    print(topic,state)
+    auxonly = state
+    time.sleep(1)  # send consecutive relay orders with 1 sec delay
+
+
+def handleTopics(recData):
+    global desiredroomtemp, desiredfloortemp, auxonly
+    global taxedprice, outtemp
+
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    # todo: add exception handling for json parsing.
+    data = json.loads(recData.payload)
+
+    # todo: add this topic compare, using setup.
+    if item == "kallio":
+        id = data['id']
+
+        if id == 'awhightemp':
+            print(datetime.utcnow(),"got high temp hours")
+            hitemphours.clear()
+            for hitemprec in data['values']:
+                hitemphours.append(hitemprec['time'])
+                print(datetime.utcnow(),"added",hitemprec['time'],"to hightemp array")
+
+        if id == 'awlowtemp':
+            print(datetime.utcnow(),"got low temp hours")
+            lotemphours.clear()
+            for lotemprec in data['values']:
+                lotemphours.append(lotemprec['time'])
+                print(datetime.utcnow(),"added",lotemprec['time'],"to low array")
+
+        elif id == 'heatsetup':
+            print(datetime.utcnow(),"got heatsetup")
+            hsetup.transferprice    = getJsonNumericVar(data, 'eltransferprice',  hsetup.transferprice)
+            hsetup.eltype           = getJsonVar(data,        'eltype',           hsetup.eltype)
+            hsetup.elprice          = getJsonNumericVar(data, 'elprice',          hsetup.elprice)
+            hsetup.heatoilprice     = getJsonNumericVar(data, 'heatoilprice',     hsetup.heatoilprice)
+
+        elif id == 'elprice':
+            print(datetime.utcnow(),"got elprice")
+            current_date = datetime.utcnow().strftime("%Y%m%d%H")
+            if (current_date != data['day']):
+                publishError("datetime", 1001, "current prices timestamp is not valid:" + data['day'])
+                print(datetime.utcnow(),"current prices timestamp is not valid")
+            else:
+                taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
+            if checkHiTemp():
+                desiredroomtemp  = 23.0 # todo: these temperature should be in setup topic
+                desiredfloortemp = 23.0
+            elif checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
+                desiredroomtemp  = 19.0
+                desiredfloortemp  = 19.0
+            else:
+                desiredroomtemp  = 21.5
+                desiredfloortemp  = 21.5
+
+    else:
+        if (item == "boiler_data"):
+            auxonly = getJsonVar(data,'auxheateronly',auxonly)
+            outtemp = getJsonNumericVar(data, 'hptl2', outtemp)
+            # this is received so often, that further processing is not need, when this is received.
+            return
+
+        elif item == "thermostat_data":
+            if not (data.get('hc1') is None):
+                hc1data = data['hc1']
+                roomtemp.set(round(getJsonNumericVar(hc1data,'seltemp',roomtemp.value),2))
+
+            if not (data.get('hc2') is None):
+                hc2data =data['hc2']
+                floortemp.set(round(getJsonNumericVar(hc2data,'seltemp',floortemp.value),2))
+
+        else:
+            print(datetime.utcnow(),"topic", item, "not handled")
+
+    if (roomtemp.value != 0):
+        if hsetup.eltype == 'stock':
+            nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
+            refprice = hsetup.heatoilprice * cop.get(outtemp) * 10 
+            if refprice < nettoprice:  # 1kw in is max 3.3kw heat out from heatpump
+                print(datetime.utcnow(), "ref price is enough lower,", round(refprice,2), "than nettoprice", nettoprice, "we just burn heatoil.")
+                setAuxHeater(True)
+            elif refprice > nettoprice + 0.2: # need some hysteresis
+                print(datetime.utcnow(), "ref price is higher", round(refprice + 0.2,2), "than nettoprice,", nettoprice,"we use aw compressor")
+                setAuxHeater(False)
+
+        if roomtemp.value != desiredroomtemp:
+            roomtemp.change(desiredroomtemp)        
+
+        if floortemp.value != desiredfloortemp:
+            floortemp.change(desiredroomtemp)
+
+        print(datetime.utcnow(),"auxonly=",auxonly,end=", ")
+        print("out temp=",outtemp, end=", ")
+        print("currentroom=",roomtemp.value,end=", ")
+        print("desiredroomtemp=",desiredroomtemp,end=", ")
+        print("currentfloor=",floortemp.value,end=", ")
+        print("desiredfloortemp=", desiredfloortemp)
+        print()
+
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        topics = [
+            (mqtt_broker.topic_prefix + "/heating/setup",     0),
+            (mqtt_broker.topic_prefix + "/elprice/awhightemp",0),
+            (mqtt_broker.topic_prefix + "/elprice/awlowtemp", 0),
+            (mqtt_broker.topic_prefix + "/elprice/current",   0),
+            ("ems-esp/boiler_data",                           0),
+            ("ems-esp/thermostat_data",                       0)
+        ]
+        client.subscribe(topics)
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+msgqueue = Queue(maxsize=25)    
+pid = os.getpid()
+
+
+client = mqtt.Client("heatpump:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except:
+        raise
+
+    
