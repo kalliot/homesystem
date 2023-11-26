@@ -21,6 +21,8 @@
 # These changes should not be done very frequently, max speed should be, let's say once a hour.
 # Compressor machines don't like rapid changes.
 
+#mosquitto_pub -h '192.168.101.231' -t 'home/kallio/heatpump/setup' -m '{"id":"heatpumpsetup","lowfloortemp":18.0}'
+
 from datetime import datetime
 import paho.mqtt.client as mqtt 
 import os
@@ -49,6 +51,8 @@ class cop_calculator:
 
     def get(self, currtemp):
         retcop = 3.0
+        factor = 0.0
+
         currtemp += 273 # in kelvins
         if currtemp < self.temps[0]:
             currtemp = self.temps[0] + 1
@@ -67,7 +71,6 @@ class cop_calculator:
                     retcop = round(factor * copdiff + startcop,2)
                 break
 
-        print(datetime.utcnow(),"factor=",round(factor,2),"copdiff=",round(copdiff,2),"cop=",round(retcop,2))
         return retcop
 
 
@@ -103,6 +106,13 @@ class heatSetup:
         self.elprice         = 7.8                           # fixed: real price. stock: buy commission
         self.transferprice   = 6.5
         self.heatoilprice    = 1.61                          # eur/liter
+        self.lowroom         = 19
+        self.normroom        = 21.5
+        self.hiroom          = 23
+        self.lowfloor        = 19
+        self.normfloor       = 21.5
+        self.hifloor         = 23
+
 
 hsetup = heatSetup()
 floortemp = temperature('ems-esp/thermostat/hc2/seltemp')
@@ -147,7 +157,7 @@ def publishError(category, code, description):
         "code"    :      code,
         "description" :  description
     }
-    topic = mqtt_broker.topic_prefix + "/error/ems-esp"
+    topic = mqtt_broker.topic_prefix + "/error/heatpump"
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
@@ -187,10 +197,9 @@ def setAuxHeater(state):
         return
 
     topic = "ems-esp/boiler/auxheateronly"
-    #client.publish(topic,state, qos=0, retain=True)
-    print(topic,state)
-    auxonly = state
-    time.sleep(1)  # send consecutive relay orders with 1 sec delay
+    client.publish(topic,state, qos=0, retain=True)
+    print(datetime.utcnow(),"changed auxonly to state:", state)
+    time.sleep(3)  # send consecutive relay orders with 3 sec delay
 
 
 def handleTopics(recData):
@@ -200,11 +209,19 @@ def handleTopics(recData):
     arr = recData.topic.split("/")
     item = arr[1]
 
-    # todo: add exception handling for json parsing.
-    data = json.loads(recData.payload)
+    try:
+        data = json.loads(recData.payload)
 
-    # todo: add this topic compare, using setup.
-    if item == "kallio":
+    except json.decoder.JSONDecodeError as e:
+        publishError("json", 1003, "json parse error:" + e)
+        print(datetime.utcnow(), "json:", e)
+        return
+
+    except:
+        raise
+
+    hometopic = mqtt_broker.topic_prefix.split("/")
+    if item == hometopic[1]:
         id = data['id']
 
         if id == 'awhightemp':
@@ -220,6 +237,16 @@ def handleTopics(recData):
             for lotemprec in data['values']:
                 lotemphours.append(lotemprec['time'])
                 print(datetime.utcnow(),"added",lotemprec['time'],"to low array")
+
+        elif id == 'heatpumpsetup':
+            print(datetime.utcnow(),"got heatpumpsetup")
+            hsetup.lowroom     = getJsonNumericVar(data, 'lowroomtemp',  hsetup.lowroom)
+            hsetup.normroom    = getJsonNumericVar(data, 'normroomtemp', hsetup.normroom)
+            hsetup.hiroom      = getJsonNumericVar(data, 'hiroomtemp',   hsetup.normroom)
+
+            hsetup.lowfloor     = getJsonNumericVar(data, 'lowfloortemp',  hsetup.lowfloor)
+            hsetup.normfloor    = getJsonNumericVar(data, 'normfloortemp', hsetup.normfloor)
+            hsetup.hifloor      = getJsonNumericVar(data, 'hifloortemp',   hsetup.normfloor)
 
         elif id == 'heatsetup':
             print(datetime.utcnow(),"got heatsetup")
@@ -237,20 +264,20 @@ def handleTopics(recData):
             else:
                 taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
             if checkHiTemp():
-                desiredroomtemp  = 23.0 # todo: these temperature should be in setup topic
-                desiredfloortemp = 23.0
+                desiredroomtemp   = hsetup.hiroom
+                desiredfloortemp  = hsetup.hifloor
             elif checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
-                desiredroomtemp  = 19.0
-                desiredfloortemp  = 19.0
+                desiredroomtemp   = hsetup.lowroom
+                desiredfloortemp  = hsetup.lowfloor
             else:
-                desiredroomtemp  = 21.5
-                desiredfloortemp  = 21.5
+                desiredroomtemp   = hsetup.normroom
+                desiredfloortemp  = hsetup.normfloor
 
     else:
         if (item == "boiler_data"):
             auxonly = getJsonVar(data,'auxheateronly',auxonly)
             outtemp = getJsonNumericVar(data, 'hptl2', outtemp)
-            # this is received so often, that further processing is not need, when this is received.
+            # this is received so often, that further processing is not needed.
             return
 
         elif item == "thermostat_data":
@@ -270,17 +297,17 @@ def handleTopics(recData):
             nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
             refprice = hsetup.heatoilprice * cop.get(outtemp) * 10 
             if refprice < nettoprice:  # 1kw in is max 3.3kw heat out from heatpump
-                print(datetime.utcnow(), "ref price is enough lower,", round(refprice,2), "than nettoprice", nettoprice, "we just burn heatoil.")
+                print(datetime.utcnow(), "ref price is enough low,", round(refprice,2), "compared to nettoprice.", nettoprice, "We just burn heatoil.")
                 setAuxHeater(True)
-            elif refprice > nettoprice + 0.2: # need some hysteresis
-                print(datetime.utcnow(), "ref price is higher", round(refprice + 0.2,2), "than nettoprice,", nettoprice,"we use aw compressor")
+            elif refprice > nettoprice + 0.6: # need some hysteresis
+                print(datetime.utcnow(), "ref price is higher", round(refprice + 0.6,2), "than nettoprice.", nettoprice,"We use aw compressor")
                 setAuxHeater(False)
 
         if roomtemp.value != desiredroomtemp:
             roomtemp.change(desiredroomtemp)        
 
         if floortemp.value != desiredfloortemp:
-            floortemp.change(desiredroomtemp)
+            floortemp.change(desiredfloortemp)
 
         print(datetime.utcnow(),"auxonly=",auxonly,end=", ")
         print("out temp=",outtemp, end=", ")
@@ -300,7 +327,7 @@ def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
         topics = [
-            (mqtt_broker.topic_prefix + "/heating/setup",     0),
+            (mqtt_broker.topic_prefix + "/+/setup",     0),
             (mqtt_broker.topic_prefix + "/elprice/awhightemp",0),
             (mqtt_broker.topic_prefix + "/elprice/awlowtemp", 0),
             (mqtt_broker.topic_prefix + "/elprice/current",   0),
