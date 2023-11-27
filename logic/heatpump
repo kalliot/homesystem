@@ -39,6 +39,7 @@ desiredroomtemp = 22.0
 desiredfloortemp = 22.0
 outtemp = 0.0
 auxonly = False
+auxchanged = 0
 hitemphours = []
 lotemphours = []
 taxedprice = 0.0
@@ -90,8 +91,8 @@ class temperature:
 
         now = int(time.time())
         diff = now - self.changed
-        if diff < 3600:
-            print(datetime.utcnow(),"prev change is too fresh,",diff, "not changing")
+        if diff < 1800:
+            print(datetime.utcnow(),"prev change in topic",self.topic,"is too fresh,",diff, "not changing")
             return
 
         print(datetime.utcnow(),self.topic, newval)    
@@ -191,21 +192,147 @@ def getJsonNumericVar(source, name, defvalue):
 
 
 def setAuxHeater(state):
-    global auxonly
+    global auxonly, auxchanged
 
     if auxonly == state:
         return
 
+    now = time.time()
+    diff = now - auxchanged
+    if diff < 1800:
+        print(datetime.utcnow(),"Auxonly change is too fresh:", diff)
+        return
     topic = "ems-esp/boiler/auxheateronly"
     client.publish(topic,state, qos=0, retain=True)
     print(datetime.utcnow(),"changed auxonly to state:", state)
-    time.sleep(3)  # send consecutive relay orders with 3 sec delay
+    auxchanged = now
+
+
+def parseEmsTopics(topic, data):
+    global auxonly, outtemp
+
+    if (topic == "boiler_data"):
+        auxonly = getJsonVar(data,'auxheateronly',auxonly)
+        outtemp = getJsonNumericVar(data, 'outdoortemp', outtemp)
+        # this is received so often, that further processing is not needed.
+        return False
+
+    elif topic == "thermostat_data":
+        if not (data.get('hc1') is None):
+            hc1data = data['hc1']
+            roomtemp.set(round(getJsonNumericVar(hc1data,'seltemp',roomtemp.value),2))
+
+        if not (data.get('hc2') is None):
+            hc2data =data['hc2']
+            floortemp.set(round(getJsonNumericVar(hc2data,'seltemp',floortemp.value),2))
+        return True
+
+    else:
+        print(datetime.utcnow(),"topic", topic, "not handled")
+
+    return False
+
+
+def parseHomeTopics(data):
+    global desiredroomtemp, desiredfloortemp, auxonly
+    global taxedprice, outtemp
+
+    id = data['id']
+
+    if id == 'awhightemp': # got high temperature schedule
+        print(datetime.utcnow(),"got high temp hours")
+        hitemphours.clear()
+        for hitemprec in data['values']:
+            hitemphours.append(hitemprec['time'])
+            print(datetime.utcnow(),"added",hitemprec['time'],"to hightemp array")
+
+        if checkHiTemp():
+            desiredroomtemp   = hsetup.hiroom
+            desiredfloortemp  = hsetup.hifloor
+
+    if id == 'awlowtemp': # got low temperature schedule
+        print(datetime.utcnow(),"got low temp hours")
+        lotemphours.clear()
+        for lotemprec in data['values']:
+            lotemphours.append(lotemprec['time'])
+            print(datetime.utcnow(),"added",lotemprec['time'],"to low array")
+
+        if checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
+            desiredroomtemp   = hsetup.lowroom
+            desiredfloortemp  = hsetup.lowfloor
+
+    elif id == 'heatpumpsetup':
+        print(datetime.utcnow(),"got heatpumpsetup")
+        hsetup.lowroom     = getJsonNumericVar(data, 'lowroomtemp',  hsetup.lowroom)
+        hsetup.normroom    = getJsonNumericVar(data, 'normroomtemp', hsetup.normroom)
+        hsetup.hiroom      = getJsonNumericVar(data, 'hiroomtemp',   hsetup.normroom)
+
+        hsetup.lowfloor     = getJsonNumericVar(data, 'lowfloortemp',  hsetup.lowfloor)
+        hsetup.normfloor    = getJsonNumericVar(data, 'normfloortemp', hsetup.normfloor)
+        hsetup.hifloor      = getJsonNumericVar(data, 'hifloortemp',   hsetup.normfloor)
+
+    elif id == 'heatsetup':
+        print(datetime.utcnow(),"got heatsetup")
+        hsetup.transferprice    = getJsonNumericVar(data, 'eltransferprice',  hsetup.transferprice)
+        hsetup.eltype           = getJsonVar(data,        'eltype',           hsetup.eltype)
+        hsetup.elprice          = getJsonNumericVar(data, 'elprice',          hsetup.elprice)
+        hsetup.heatoilprice     = getJsonNumericVar(data, 'heatoilprice',     hsetup.heatoilprice)
+
+    elif id == 'elprice':
+        print(datetime.utcnow(),"got elprice")
+        current_date = datetime.utcnow().strftime("%Y%m%d%H")
+        if (current_date != data['day']):
+            publishError("datetime", 1001, "current prices timestamp is not valid:" + data['day'])
+            print(datetime.utcnow(),"current prices timestamp is not valid")
+        else:
+            taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
+        if checkHiTemp():
+            desiredroomtemp   = hsetup.hiroom
+            desiredfloortemp  = hsetup.hifloor
+        elif checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
+            desiredroomtemp   = hsetup.lowroom
+            desiredfloortemp  = hsetup.lowfloor
+        else:
+            desiredroomtemp   = hsetup.normroom
+            desiredfloortemp  = hsetup.normfloor
+
+
+def tuneCompressor():
+    global taxedprice, outtemp
+
+    if roomtemp.value == 0:
+        return
+
+    if hsetup.eltype == 'stock':
+        compressorHysteresis = 0.5
+        nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice, 2)
+        burnerprice = round(hsetup.heatoilprice * 10,2) # changing Euros/litre to cents/kW
+        compressorOffPrice = round(nettoprice / cop.get(outtemp),2)
+        compressorOnPrice = round(nettoprice / cop.get(outtemp + compressorHysteresis),2)
+        print(datetime.utcnow(),"burnerprice=", burnerprice,"nettoprice=", nettoprice)
+        print(datetime.utcnow(),"compresserOnPrice=", compressorOnPrice, "compressorOffPrice=", compressorOffPrice)
+        if burnerprice < compressorOffPrice:
+            print(datetime.utcnow(), "Burner price is now enough low, compared to compressor price. We just burn heatoil.")
+            setAuxHeater(True)
+        else:
+            if burnerprice > compressorOnPrice:
+                print(datetime.utcnow(), "Burner price is higher than compressor. We use aw compressor")
+                setAuxHeater(False)
+            else:
+                print(datetime.utcnow(),"Now waiting burnerprice > compressorOnPrice.", burnerprice,">",compressorOnPrice)
+
+    if roomtemp.value != desiredroomtemp:
+        roomtemp.change(desiredroomtemp)
+
+    if floortemp.value != desiredfloortemp:
+        floortemp.change(desiredfloortemp)
 
 
 def handleTopics(recData):
     global desiredroomtemp, desiredfloortemp, auxonly
     global taxedprice, outtemp
 
+    tune = True
     arr = recData.topic.split("/")
     item = arr[1]
 
@@ -221,93 +348,14 @@ def handleTopics(recData):
         raise
 
     hometopic = mqtt_broker.topic_prefix.split("/")
+
     if item == hometopic[1]:
-        id = data['id']
-
-        if id == 'awhightemp':
-            print(datetime.utcnow(),"got high temp hours")
-            hitemphours.clear()
-            for hitemprec in data['values']:
-                hitemphours.append(hitemprec['time'])
-                print(datetime.utcnow(),"added",hitemprec['time'],"to hightemp array")
-
-        if id == 'awlowtemp':
-            print(datetime.utcnow(),"got low temp hours")
-            lotemphours.clear()
-            for lotemprec in data['values']:
-                lotemphours.append(lotemprec['time'])
-                print(datetime.utcnow(),"added",lotemprec['time'],"to low array")
-
-        elif id == 'heatpumpsetup':
-            print(datetime.utcnow(),"got heatpumpsetup")
-            hsetup.lowroom     = getJsonNumericVar(data, 'lowroomtemp',  hsetup.lowroom)
-            hsetup.normroom    = getJsonNumericVar(data, 'normroomtemp', hsetup.normroom)
-            hsetup.hiroom      = getJsonNumericVar(data, 'hiroomtemp',   hsetup.normroom)
-
-            hsetup.lowfloor     = getJsonNumericVar(data, 'lowfloortemp',  hsetup.lowfloor)
-            hsetup.normfloor    = getJsonNumericVar(data, 'normfloortemp', hsetup.normfloor)
-            hsetup.hifloor      = getJsonNumericVar(data, 'hifloortemp',   hsetup.normfloor)
-
-        elif id == 'heatsetup':
-            print(datetime.utcnow(),"got heatsetup")
-            hsetup.transferprice    = getJsonNumericVar(data, 'eltransferprice',  hsetup.transferprice)
-            hsetup.eltype           = getJsonVar(data,        'eltype',           hsetup.eltype)
-            hsetup.elprice          = getJsonNumericVar(data, 'elprice',          hsetup.elprice)
-            hsetup.heatoilprice     = getJsonNumericVar(data, 'heatoilprice',     hsetup.heatoilprice)
-
-        elif id == 'elprice':
-            print(datetime.utcnow(),"got elprice")
-            current_date = datetime.utcnow().strftime("%Y%m%d%H")
-            if (current_date != data['day']):
-                publishError("datetime", 1001, "current prices timestamp is not valid:" + data['day'])
-                print(datetime.utcnow(),"current prices timestamp is not valid")
-            else:
-                taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
-            if checkHiTemp():
-                desiredroomtemp   = hsetup.hiroom
-                desiredfloortemp  = hsetup.hifloor
-            elif checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
-                desiredroomtemp   = hsetup.lowroom
-                desiredfloortemp  = hsetup.lowfloor
-            else:
-                desiredroomtemp   = hsetup.normroom
-                desiredfloortemp  = hsetup.normfloor
-
+        parseHomeTopics(data)
     else:
-        if (item == "boiler_data"):
-            auxonly = getJsonVar(data,'auxheateronly',auxonly)
-            outtemp = getJsonNumericVar(data, 'hptl2', outtemp)
-            # this is received so often, that further processing is not needed.
-            return
+        tune = parseEmsTopics(item, data)
 
-        elif item == "thermostat_data":
-            if not (data.get('hc1') is None):
-                hc1data = data['hc1']
-                roomtemp.set(round(getJsonNumericVar(hc1data,'seltemp',roomtemp.value),2))
-
-            if not (data.get('hc2') is None):
-                hc2data =data['hc2']
-                floortemp.set(round(getJsonNumericVar(hc2data,'seltemp',floortemp.value),2))
-
-        else:
-            print(datetime.utcnow(),"topic", item, "not handled")
-
-    if (roomtemp.value != 0):
-        if hsetup.eltype == 'stock':
-            nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
-            refprice = hsetup.heatoilprice * cop.get(outtemp) * 10 
-            if refprice < nettoprice:  # 1kw in is max 3.3kw heat out from heatpump
-                print(datetime.utcnow(), "ref price is enough low,", round(refprice,2), "compared to nettoprice.", nettoprice, "We just burn heatoil.")
-                setAuxHeater(True)
-            elif refprice > nettoprice + 0.6: # need some hysteresis
-                print(datetime.utcnow(), "ref price is higher", round(refprice + 0.6,2), "than nettoprice.", nettoprice,"We use aw compressor")
-                setAuxHeater(False)
-
-        if roomtemp.value != desiredroomtemp:
-            roomtemp.change(desiredroomtemp)        
-
-        if floortemp.value != desiredfloortemp:
-            floortemp.change(desiredfloortemp)
+    if (tune):
+        tuneCompressor()
 
         print(datetime.utcnow(),"auxonly=",auxonly,end=", ")
         print("out temp=",outtemp, end=", ")
@@ -315,7 +363,6 @@ def handleTopics(recData):
         print("desiredroomtemp=",desiredroomtemp,end=", ")
         print("currentfloor=",floortemp.value,end=", ")
         print("desiredfloortemp=", desiredfloortemp)
-        print()
 
 
 
@@ -361,7 +408,7 @@ client = mqtt.Client("heatpump:" + str(pid))
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_disconnect = on_disconnect
-client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
