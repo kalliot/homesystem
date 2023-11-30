@@ -1,27 +1,5 @@
 #!/usr/bin/env python
 
-# Asetetaan lattiakierron lämpö:
-# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/thermostat/hc2/seltemp' -m 21.5
-#
-# Asetetaan patterikierron lämpö
-# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/thermostat/seltemp' -m 21.5 
-#
-# aux heater only = true => kompressori pysähtyy ja järjestelmä vääntää kattilan shunttia auki.
-#  Vesi kuitenkin kiertää ulkoyksikössä aina. Joten ei jäätymisvaaraa.
-# olisikohan viesti seuraava:
-# mosquitto_pub -h 192.168.101.231 -t 'ems-esp/boiler/auxheateronly' -m true
-
-# rules:
-# Change to aux heater only, if electricity total price goes raises: (3  * oilprice) < (stock + commission + transfer)
-# situation now 17.11.2023 is: (3 * 14.50) < (x + 0.40 + 6.5)
-#                          -> x = (3 * 14.50) - 0.40 - 6.5
-#                          -> x = 36.6 cents
-
-
-# These changes should not be done very frequently, max speed should be, let's say once a hour.
-# Compressor machines don't like rapid changes.
-
-#mosquitto_pub -h '192.168.101.231' -t 'home/kallio/heatpump/setup' -m '{"id":"heatpumpsetup","lowfloortemp":18.0}'
 
 from datetime import datetime
 import paho.mqtt.client as mqtt 
@@ -29,20 +7,21 @@ import os
 import time
 import json
 import sys
-from queue import Queue
+from queue import Queue, Empty
 
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
-desiredroomtemp = 22.0
-desiredfloortemp = 22.0
+desiredroomtemp = 21.5
+desiredfloortemp = 21.5
 outtemp = 0.0
 auxonly = False
 auxchanged = 0
 hitemphours = []
 lotemphours = []
 taxedprice = 0.0
+lastemsdata = time.time()
 
 class cop_calculator:
     def __init__(self):
@@ -82,7 +61,10 @@ class temperature:
         self.value = 0
 
     def set(self, val):
-        self.value = val
+        if self.value != val:
+            self.value = val
+            return True
+        return False
 
     def change(self, newval):
 
@@ -195,7 +177,7 @@ def setAuxHeater(state):
     global auxonly, auxchanged
 
     if auxonly == state:
-        return
+        return False
 
     now = time.time()
     diff = now - auxchanged
@@ -205,19 +187,26 @@ def setAuxHeater(state):
     topic = "ems-esp/boiler/auxheateronly"
     client.publish(topic,state, qos=0, retain=True)
     print(datetime.utcnow(),"changed auxonly to state:", state)
-    auxchanged = now
+    time.sleep(1)
+    return True
 
 
 def parseEmsTopics(topic, data):
-    global auxonly, outtemp
+    global auxonly, outtemp, auxchanged, lastemsdata
 
     if (topic == "boiler_data"):
-        auxonly = getJsonVar(data,'auxheateronly',auxonly)
+        lastemsdata = time.time()
+        auxstate = getJsonVar(data,'auxheateronly',auxonly)
+        if auxstate != auxonly:
+            auxchanged = time.time()
+            auxonly = auxstate
+
         outtemp = getJsonNumericVar(data, 'outdoortemp', outtemp)
         # this is received so often, that further processing is not needed.
         return False
 
     elif topic == "thermostat_data":
+        lastemsdata = time.time()
         if not (data.get('hc1') is None):
             hc1data = data['hc1']
             roomtemp.set(round(getJsonNumericVar(hc1data,'seltemp',roomtemp.value),2))
@@ -265,11 +254,10 @@ def parseHomeTopics(data):
         print(datetime.utcnow(),"got heatpumpsetup")
         hsetup.lowroom     = getJsonNumericVar(data, 'lowroomtemp',  hsetup.lowroom)
         hsetup.normroom    = getJsonNumericVar(data, 'normroomtemp', hsetup.normroom)
-        hsetup.hiroom      = getJsonNumericVar(data, 'hiroomtemp',   hsetup.normroom)
-
+        hsetup.hiroom      = getJsonNumericVar(data, 'hiroomtemp',   hsetup.hiroom)
         hsetup.lowfloor     = getJsonNumericVar(data, 'lowfloortemp',  hsetup.lowfloor)
         hsetup.normfloor    = getJsonNumericVar(data, 'normfloortemp', hsetup.normfloor)
-        hsetup.hifloor      = getJsonNumericVar(data, 'hifloortemp',   hsetup.normfloor)
+        hsetup.hifloor      = getJsonNumericVar(data, 'hifloortemp',   hsetup.hifloor)
 
     elif id == 'heatsetup':
         print(datetime.utcnow(),"got heatsetup")
@@ -298,10 +286,11 @@ def parseHomeTopics(data):
 
 
 def tuneCompressor():
-    global taxedprice, outtemp
+    global taxedprice, outtemp, desiredfloortemp, desiredroomtemp
+    ret = False
 
     if roomtemp.value == 0:
-        return
+        return False # in init state.
 
     if hsetup.eltype == 'stock':
         compressorHysteresis = 0.5
@@ -309,23 +298,26 @@ def tuneCompressor():
         burnerprice = round(hsetup.heatoilprice * 10,2) # changing Euros/litre to cents/kW
         compressorOffPrice = round(nettoprice / cop.get(outtemp),2)
         compressorOnPrice = round(nettoprice / cop.get(outtemp + compressorHysteresis),2)
-        print(datetime.utcnow(),"burnerprice=", burnerprice,"nettoprice=", nettoprice)
-        print(datetime.utcnow(),"compresserOnPrice=", compressorOnPrice, "compressorOffPrice=", compressorOffPrice)
         if burnerprice < compressorOffPrice:
-            print(datetime.utcnow(), "Burner price is now enough low, compared to compressor price. We just burn heatoil.")
-            setAuxHeater(True)
+            if setAuxHeater(True):
+                print(datetime.utcnow(), "Burner price is now enough low:",burnerprice, "compared to compressor price",compressorOffPrice,". We just burn heatoil.")
+                ret = True
         else:
             if burnerprice > compressorOnPrice:
-                print(datetime.utcnow(), "Burner price is higher than compressor. We use aw compressor")
-                setAuxHeater(False)
+                if setAuxHeater(False):
+                    print(datetime.utcnow(), "Burner price:",burnerprice,"is higher than compressor:",compressorOnPrice,". We use aw compressor")
+                    ret = True
             else:
                 print(datetime.utcnow(),"Now waiting burnerprice > compressorOnPrice.", burnerprice,">",compressorOnPrice)
 
     if roomtemp.value != desiredroomtemp:
         roomtemp.change(desiredroomtemp)
+        ret = True
 
     if floortemp.value != desiredfloortemp:
         floortemp.change(desiredfloortemp)
+        ret = True
+    return ret
 
 
 def handleTopics(recData):
@@ -354,9 +346,7 @@ def handleTopics(recData):
     else:
         tune = parseEmsTopics(item, data)
 
-    if (tune):
-        tuneCompressor()
-
+    if tune and tuneCompressor():
         print(datetime.utcnow(),"auxonly=",auxonly,end=", ")
         print("out temp=",outtemp, end=", ")
         print("currentroom=",roomtemp.value,end=", ")
@@ -415,12 +405,21 @@ client.loop_start()
 
 
 while (True):
+    now = time.time()
+    diff = now - lastemsdata
+    if diff > 300:
+        print(datetime.utcnow(), "ems-esp problem!")
+        publishError("ems-esp", 2000, "It is too long since got ems-esp message." + diff + "seconds.")
+
     try:
-        data = msgqueue.get(block=True)
+        data = msgqueue.get(block=True, timeout=60)
         if data is None:
             continue
         handleTopics(data)
         sys.stdout.flush()
+
+    except Empty:
+        print(datetime.utcnow(), "Timeout")
 
     except KeyboardInterrupt:
         client.disconnect()
