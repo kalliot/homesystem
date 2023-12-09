@@ -1,0 +1,192 @@
+#!/usr/bin/env python
+
+import os
+from datetime import datetime
+from datetime import timezone
+import json
+import time
+import paho.mqtt.client as mqtt 
+import paho.mqtt.subscribe as subscribe
+from queue import Queue, Empty
+import sys
+
+
+maxload = -2800 # this should be bigger than hysteresis
+currentpower = 0.0
+startdelay = 60 # after last change, plug can be turned on after seconds
+devicedelay = 20 # delay between plugs
+statechangets = 0
+boiler_addition = 0
+shelter_addition = 0
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+class elplug:
+    def __init__(self, name, state, hysteresis):
+        self.name = name
+        self.state = state
+        self.hysteresis = hysteresis
+        self.changets = 0
+        
+    def setState(self, state):
+        relaymsg = {
+            'state': state
+        }
+        topic = "zigbee2mqtt/" + self.name + "/set"
+        client.publish(topic, json.dumps(relaymsg), qos=0, retain=False)
+        self.changets = int(time.time())
+        time.sleep(1)
+
+machines = [elplug("coffeemachine",True, -200),
+            elplug("vedenkeitin"  ,True, -200)]
+
+
+def processData(recData):
+    global currentpower, statechangets, boiler_addition, shelter_addition
+
+    arr = recData.topic.split("/")
+    item = arr[1]
+    data = json.loads(recData.payload)
+
+    if item == "kallio":
+        id = data['id']
+        if id == "elproduction": # we know this is phase1, because it is requested in topic.
+            currentpower = round(float(data['power']),2)
+            print(datetime.utcnow(),"power", currentpower)
+        elif id == "relay": 
+            state = data['state']
+            device = data['device']
+            contact = data['contact']
+            if device == "shelly1" and contact == 2:
+                if state:
+                    boiler_addition = -2000
+                    print(datetime.utcnow(),"got relay", device, "on state, addition is now", boiler_addition)
+                else:
+                    if boiler_addition != 0:
+                        statechangets = int(time.time())
+                    boiler_addition = 0
+                    print(datetime.utcnow(),"got relay", device, "off state, addition is now", boiler_addition)
+
+            elif device == "shellyplus1pm" and contact == 0:
+                if state:
+                    shelter_addition = round(float(data['power']) * -1, 1)
+                    print(datetime.utcnow(),"got relay", device, "on state, addition is now", shelter_addition)
+                else:
+                    if shelter_addition != 0:
+                        statechangets = int(time.time())
+                    shelter_addition = 0
+                    print(datetime.utcnow(),"got relay", device, "off state, addition is now", shelter_addition)
+
+                
+
+    else:
+        for machine in machines:
+            if (item == machine.name):
+                machine.state = data['state'] == "ON"
+                print(datetime.utcnow(), "state of", machine.name, "changed to", machine.state)
+
+def checkStates():
+    global statechangets, boiler_addition, shelter_addition
+    global currentpower, devicedelay
+
+    now = int(time.time())
+    diff = now - statechangets
+    if diff > devicedelay:
+        for machine in machines:
+            if machine.state == True and (currentpower + machine.hysteresis) < (maxload + boiler_addition + shelter_addition):
+                print(datetime.utcnow(), "Comparing", currentpower + machine.hysteresis, "<", maxload + boiler_addition + shelter_addition)
+                print(datetime.utcnow(), "Too big consumption", currentpower + machine.hysteresis, "turning", machine.name, "to off")
+                machine.setState("OFF")
+                statechangets = now
+                break # don't check other machines at this event, to not stop them all
+
+            elif machine.state == False and (currentpower) > (maxload + boiler_addition + shelter_addition) and (now - machine.changets) > startdelay:
+                print(datetime.utcnow(), "Low consumption", currentpower, "turning coffee to on")
+                machine.setState("ON")
+                statechangets = now
+                break # don't check other machines at this event, to not stop them all, to not stop them all
+    else:
+        print(datetime.utcnow(),"wait between plugs,", diff, "<", devicedelay)
+
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def logger(client, userdata, level, buff):
+    print("level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print("connection failed, rc=",rc)
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
+
+def on_publish(client, userdata,result):
+    pass
+
+
+msgqueue = Queue(maxsize=10)
+
+client = mqtt.Client("phaserestrictor" + str(os.getpid())) #create new instance
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive = 240) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+topics = []
+topics.append((mqtt_broker.topic_prefix + "/phase/1/elproduction",0))
+topics.append((mqtt_broker.topic_prefix + "/relay/2/shelly1/state",0))
+topics.append((mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state",0))
+for machine in machines:
+    topics.append(("zigbee2mqtt/" + machine.name,0))
+
+
+client.subscribe(topics)
+
+while True:
+    checkStates()
+    try:
+        data = msgqueue.get(block=True, timeout=15)
+        if data is None:
+            continue
+        processData(data)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except Empty:
+        print(datetime.utcnow(), "Timeout")
+        pass
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise        
+   
+    sys.stdout.flush()
