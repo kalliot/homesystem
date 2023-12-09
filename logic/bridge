@@ -1,0 +1,229 @@
+#!/usr/bin/env python
+
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import paho.mqtt.publish as publish
+import os
+import time
+import json
+import sys
+from queue import Queue, Empty
+
+sys.path.insert(1, '../config')
+from setup import *
+
+boilertempreader = "5bcae4"
+centertempsensor = "281672574e13c75"
+cloud_refresh_interval = 60
+
+class overview:
+    def __init__(self):
+        self.livingroomtemp = 0
+        self.livingroomhumidity = 0
+        self.outdoortemp    = 0
+        self.radiatortemp   = 0
+        self.storetemp      = 0
+        self.boilertemp     = 0
+        self.electricity    = 0
+        self.waterleak      = "None"
+        self.lastsend       = 0
+        
+
+    def send(self):
+        now = int(time.time())
+        if (now - self.lastsend) > cloud_refresh_interval:
+            self.lastsend = now
+
+            jsonRec = {
+                "ts"      :      now,
+                "livingroom":    self.livingroomtemp,
+                "humidity"  :    self.livingroomhumidity,
+                "outdoor"    :   self.outdoortemp,
+                "radiator" :     self.radiatortemp,
+                "store"    :     self.storetemp,
+                "boiler"    :    self.boilertemp,
+                "electricity":   self.electricity,
+                "waterleak":     self.waterleak
+            }
+            topic = mqtt_broker.topic_prefix + "/overview"
+            cloud.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+
+compiled = overview()
+
+
+def getJsonNumericVar(source, name, defvalue):
+    try:
+        ret = float(source[name])
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        return defvalue
+    return ret
+
+def getJsonVar(source, name, defvalue):
+    try:
+        ret = source[name]
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        return defvalue
+    return ret
+
+
+
+def parseOtherTopics(topic, data):
+    if topic=="varasto":
+        compiled.storetemp = round(getJsonNumericVar(data,'temperature',compiled.storetemp),2)
+        compiled.send()
+
+    elif topic=="olohuone":
+        compiled.livingroomtemp     = round(getJsonNumericVar(data,'temperature',compiled.livingroomtemp),2)
+        compiled.livingroomhumidity = round(getJsonNumericVar(data,'humidity',compiled.livingroomhumidity),2)
+        compiled.send()
+
+    elif topic=="boiler_data":
+        compiled.radiatortemp = round(getJsonNumericVar(data,'curflowtemp',compiled.radiatortemp),2)
+        compiled.outdoortemp = round(getJsonNumericVar(data,'outdoortemp',compiled.outdoortemp),2)
+        compiled.send()
+
+    elif topic == "kitchen_trash":
+        state = getJsonVar(data,'water_leak', False)
+        if state:
+            compiled.waterleak = topic
+        else:
+            compiled.waterleak = "None"
+
+
+
+def parseHomeTopics(data):
+    global centertempsensor
+    id = data['id']
+
+    if id == "temperature":
+        if data['sensor'] == centertempsensor:
+            compiled.boilertemp = round(getJsonNumericVar(data,'value',compiled.boilertemp),2)
+            compiled.send()
+
+    elif id == "elproduction":
+        compiled.electricity = round(getJsonNumericVar(data,'poweravg',compiled.electricity),2)
+
+
+def handleTopics(recData):
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    try:
+        data = json.loads(recData.payload)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        return
+
+    except:
+        raise
+
+    hometopic = mqtt_broker.topic_prefix.split("/")
+
+    if item == hometopic[1]:
+        parseHomeTopics(data)
+    else:
+        parseOtherTopics(item, data)
+
+def oncloud_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def oncloud_connect(client, userdata, flags, rc):
+    if (rc==0):
+        print(datetime.utcnow(),"cloud connected")
+    else:
+        print(datetime.utcnow(),"cloud connection failed, rc=",rc)          
+
+
+def oncloud_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"cloud disconnected")
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"cloud reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    if (rc==0):
+        topics = [
+            ("ems-esp/boiler_data",                           0),
+            ("ems-esp/thermostat_data",                       0),
+            ("zigbee2mqtt/#",                                 0),
+            (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/#",0),
+            (mqtt_broker.topic_prefix + "/phase/all/elproduction",0)
+        ]
+        client.subscribe(topics)
+    else:
+        print("connection failed, rc=",rc)            
+
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+msgqueue = Queue(maxsize=25)    
+pid = os.getpid()
+
+
+client = mqtt.Client("bridge_from:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60)
+print(datetime.utcnow(), "Start")
+
+
+cloud = mqtt.Client("bridge_to:" + str(pid))
+cloud.on_connect = oncloud_connect
+cloud.on_message = oncloud_message
+cloud.on_disconnect = oncloud_disconnect
+cloud.connect("test.mosquitto.org",port=mqtt_broker.port, keepalive=60)
+
+
+client.loop_start()
+cloud.loop_start()
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True, timeout=60)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except Empty:
+        print(datetime.utcnow(), "Timeout")
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        cloud.disconnect()
+        cloud.loop_stop()
+        exit(0)
+
+    except:
+        raise
+
