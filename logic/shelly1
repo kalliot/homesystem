@@ -18,6 +18,9 @@ class relay:
         self.index = index
         self.state = False
         self.ts = 0
+        self.power = 0
+        self.current = 0
+        self.voltage = 0
         self.initdone = False
         self.temperature = 0
         self.count = 0
@@ -68,6 +71,9 @@ def publishRelay(rel):
         'device' : shellyname,
         'contact': rel.index,
         'state': rel.state,
+        'current': rel.current,
+        'voltage': rel.voltage,
+        'power': rel.power,
         'ts': rel.ts
     }
     rel.count += 1
@@ -112,8 +118,9 @@ def processData(eldata):
             relays[index].state = result['output']
             temperatures = result['temperature']
             relays[index].temperature = float(temperatures['tC'])
+            relays[index].voltage = round(float(result['voltage']),1)
             publishRelay(relays[index])
-            print(datetime.now(),"relay",index,"state",result['output'], "temp",relays[index].temperature)
+            print(datetime.utcnow(),"relay",index,"state",result['output'], "temp",relays[index].temperature)
 
 
     if not (eldata.get('method') is None):
@@ -125,17 +132,28 @@ def processData(eldata):
             
             for rel in relays:
                 swname = 'switch:' + str(rel.index)
+                publish = False
                 if not (params.get(swname) is None):
                     relaydata =  params[swname]
+                    print(datetime.utcnow(),rel.index,"changed")
+                    rel.ts = ts
                     if not (relaydata.get('output') is None):
-                        state = relaydata['output']
-                        if state != rel.state or rel.initdone == False:
-                            print(datetime.now(),rel.index,"changed")
-                            rel.initdone = True
-                            rel.state = state
-                            rel.ts = ts
-                            publishRelay(rel)
+                        rel.initdone = True
+                        rel.state = relaydata['output']
+                        publish = True
 
+                    if not (relaydata.get("apower") is None):
+                        rel.power = relaydata['apower']
+                        if rel.state == True:
+                            publish = True
+
+                    if not (relaydata.get("current") is None):
+                        rel.current = relaydata['current']
+                        if rel.state:
+                            publish = True
+
+                    if publish == True:
+                        publishRelay(rel)
 
 def on_message(client, userdata, message):
     msgqueue.put(message.payload)
@@ -146,11 +164,21 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print(datetime.now(),"connection failed, rc=",rc)
+        print(datetime.utcnow(),"connection failed, rc=",rc)
         connected = False
 
+
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
 
 def on_publish(client, userdata,result):
     pass
