@@ -8,7 +8,7 @@ from queue import Queue, Empty
 import sys
 
 sys.path.insert(1, '../config')
-from setup import * mqtt_broker
+from setup import *
 
 shellyname = "shelly4"
 statsInterval = 300
@@ -122,7 +122,7 @@ def processData(eldata):
             relays[index].current = float(result['current'])
             temperatures = result['temperature']
             relays[index].temperature = float(temperatures['tC'])
-            print(datetime.now(),"relay",index,"state",result['output'], "volt", relays[index].voltage, "temp",relays[index].temperature, "amps",relays[index].current)
+            print(datetime.utcnow(),"relay",index,"state",result['output'], "volt", relays[index].voltage, "temp",relays[index].temperature, "amps",relays[index].current)
 
 
     if not (eldata.get('method') is None):
@@ -139,7 +139,7 @@ def processData(eldata):
                     if not (relaydata.get('output') is None):
                         state = relaydata['output']
                         if state != rel.state or rel.initdone == False:
-                            print(datetime.now(),rel.index,"changed")
+                            print(datetime.utcnow(),rel.index,"changed")
                             rel.initdone = True
                             rel.state = state
                             rel.ts = ts
@@ -159,11 +159,21 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
     else:
-        print(datetime.now(),"connection failed, rc=",rc)
+        print(datetime.utcnow(),"connection failed, rc=",rc)
         connected = False
 
+
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
 
 def on_publish(client, userdata,result):
     pass
