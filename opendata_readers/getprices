@@ -102,13 +102,51 @@ def strTime(dateTime):
     ts = int(datetime.fromisoformat(dateTime).timestamp())
     return datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H")
 
+class specialHour():
+    def __init__(self, name):
+        self.name = name
+        self.times = []
+        self.prices = []
+        self.reasons = []
+        self.tstamps = []
+        self.count = 0
+
+    def addRec(self, strtime,price,reason,tstamp):
+        if not strtime in self.times:
+            self.times.append(strtime)
+            self.prices.append(price)
+            self.reasons.append(reason)
+            self.tstamps.append(tstamp)
+            self.count += 1
+
+    def delRec(self, strtime):
+        for i in range(self.count):
+            if (self.times[i] == strtime):
+                self.times.pop(i)
+                self.prices.pop(i)
+                self.reasons.pop(i)
+                self.tstamps.pop(i)
+                self.count -= 1
+                break
+
+
+    def publish(self):
+        topic = mqtt_broker.topic_prefix + "/elprice/" + self.name
+        result = {
+                    "id": self.name, "ts": int(time.time()), "values": [
+                        {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(self.tstamps, self.times, self.prices, self.reasons)
+                    ]
+                }
+        client.publish(topic, json.dumps(result), qos=0, retain=True)
+
+cheapHours     = specialHour("awhightemp")
+expensiveHours = specialHour("awlowtemp")
 
 def findHeatPumpCheapHours(data, overPrice):
     hourCnt = 0
     cnt     = 0
     price   = 0.0
     prevprice = 0.0
-    times, prices, reasons, tstamps = [], [], [], []
 
     datalen = len(data)
     print(datetime.now(),"datalen=",datalen, "pricelimit=", overPrice)
@@ -137,45 +175,19 @@ def findHeatPumpCheapHours(data, overPrice):
 
             if price < overPrice and prevprice > price and nextprice > price:
                 if (prevPriceratio > priceratio):
-                    s = strTime(data[cnt-1]['DateTime'])
-                    if not s in times:
-                        times.append(s)
-                        tstamps.append(ts-3600)
-                        reasons.append('beforebottom')
-                        prices.append(prevprice)
-
-                s = strTime(hour["DateTime"])
-                if not s in times:
-                    times.append(s)
-                    reasons.append('bottom')
-                    tstamps.append(ts)
-                    prices.append(price)
-
+                    cheapHours.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforebottom',ts-3600)
+                cheapHours.addRec(strTime(hour['DateTime']),price,'bottom',ts)
                 if nextPriceRatio > priceratio and cnt+1 < datalen:
-                    s = strTime(data[cnt+1]['DateTime'])
-                    if not s in times:
-                        times.append(s)
-                        tstamps.append(ts+3600)
-                        reasons.append('afterbottom')
-                        prices.append(nextprice)
-
+                    cheapHours.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'afterbottom',ts+3600)
             prevprice = price
         cnt += 1
 
-    topic = mqtt_broker.topic_prefix + "/elprice/awhightemp"
-    result = {
-                "id":"awhightemp", "ts": int(time.time()), "values": [
-                    {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)
-                ]
-             }
-    client.publish(topic, json.dumps(result), qos=0, retain=True)
 
 
 def findHeatPumpExpensiveHours(data, overPrice):
     hourCnt = 0
     cnt     = 0
     price   = 0.0
-    times, prices, reasons, tstamps = [], [], [], []
 
     prevprice = round(float(data[0]['PriceWithTax']) * 100.0,2)
     datalen = len(data)
@@ -206,39 +218,22 @@ def findHeatPumpExpensiveHours(data, overPrice):
                 # top of the price hill and it's neighbors.
                 if prevprice < price and nextprice < price:
                     if (prevPriceratio > priceratio):
-                        s = strTime(data[cnt-1]['DateTime'])
-                        if not s in times:
-                            times.append(s)
-                            tstamps.append(ts-3600)
-                            reasons.append('beforetop')
-                            prices.append(prevprice)
-
-                    s = strTime(hour["DateTime"])
-                    if not s in times:
-                        times.append(s)
-                        reasons.append('top')
-                        tstamps.append(ts)
-                        prices.append(price)
+                        expensiveHours.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforetop',ts-3600)
+                    expensiveHours.addRec(strTime(hour['DateTime']),price,'top',ts)
 
                     if nextPriceRatio > priceratio and cnt+1 < datalen:
-                        s = strTime(data[cnt+1]['DateTime'])
-                        if not s in times:
-                            times.append(s)
-                            tstamps.append(ts+3600)
-                            reasons.append('aftertop')
-                            prices.append(nextprice)
-
+                        expensiveHours.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'aftertop',ts+3600)
             prevprice = price
         cnt += 1
 
-    topic = mqtt_broker.topic_prefix + "/elprice/awlowtemp"
-    result = {
-                "id":"awlowtemp", "ts": int(time.time()), "values": [
-                    {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)
-                ]
-             }
-    client.publish(topic, json.dumps(result), qos=0, retain=True)
+def removeDuplicates():
+    if expensiveHours.count > cheapHours.count:
+        for hour in cheapHours.times:
+            expensiveHours.delRec(hour)
 
+    if expensiveHours.count < cheapHours.count:
+        for hour in expensiveHours.times:
+            cheapHours.delRec(hour)
 
 
 def findBoostHours(data, overPrice):
@@ -333,9 +328,14 @@ for i in range(3):
     data = x.json()
     if x.status_code == 200:
         now = int(time.time())
+
         findBoostHours(data, pricelimit) # heating oil price - transfer - commission from stock price
         findHeatPumpCheapHours(data, compressor_pricelimit)
         findHeatPumpExpensiveHours(data, compressor_pricelimit)
+        removeDuplicates()
+        cheapHours.publish()
+        expensiveHours.publish()
+
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
             if (ts > (now - 3600)):
