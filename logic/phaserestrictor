@@ -116,25 +116,30 @@ def on_message(client, userdata, message):
 
 
 def logger(client, userdata, level, buff):
-    print("level=",level," buff=",buff)
+    print(datetime.utcnow(),"level=",level," buff=",buff)
 
 
 def on_connect(client, userdata, flags, rc):
-    global connected
+    global machines
+
+    print(datetime.utcnow(),"connected, rc=",rc)
     if (rc==0):
-        connected = True
-    else:
-        print("connection failed, rc=",rc)
-        connected = False
+        topics = []
+        topics.append((mqtt_broker.topic_prefix + "/phase/1/elproduction",0))
+        topics.append((mqtt_broker.topic_prefix + "/relay/2/shelly1/state",0))
+        topics.append((mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state",0))
+        for machine in machines:
+            topics.append(("zigbee2mqtt/" + machine.name,0))
+        client.subscribe(topics)
 
 
 def on_disconnect(client, userdata, rc):
-    print(datetime.utcnow(),"disconnected")
+    print(datetime.utcnow(),"disconnected rc=", rc)
     if rc != 7:
         try:
             client.reconnect()
         except:
-            print(datetime.now(),"reconnect failed, waiting...")
+            print(datetime.utcnow(),"reconnect failed, waiting...")
             time.sleep(30)
     else:
         time.sleep(1)
@@ -156,15 +161,6 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive = 240)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-topics = []
-topics.append((mqtt_broker.topic_prefix + "/phase/1/elproduction",0))
-topics.append((mqtt_broker.topic_prefix + "/relay/2/shelly1/state",0))
-topics.append((mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state",0))
-for machine in machines:
-    topics.append(("zigbee2mqtt/" + machine.name,0))
-
-
-client.subscribe(topics)
 
 while True:
     checkStates()

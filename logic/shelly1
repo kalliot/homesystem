@@ -2,6 +2,7 @@
 
 from datetime import datetime
 import time
+import os
 import json
 import paho.mqtt.client as mqtt 
 from queue import Queue, Empty
@@ -10,7 +11,7 @@ import sys
 sys.path.insert(1, '/home/pi/config')
 from setup import mqtt_broker
 
-shellyname = "shelly1"
+shellyname = "topicforshelly1relay" # actual name is received from argv
 statsInterval = 300
 
 class relay:
@@ -30,6 +31,11 @@ relays = [relay(0)]
 
 def queryStatus(num):
     global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not querying status, we are not connected.")
+        return
+
     relaymsg = {
         'id': 'status',
         'src': shellyname + '/events',
@@ -44,6 +50,10 @@ def queryStatus(num):
 
 def publishStats():
     global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing statistics, we are not connected.")
+        return
 
     stats = []
     for rel in relays:
@@ -66,6 +76,11 @@ def publishStats():
 
 def publishRelay(rel):
     global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing relay commands, we are not connected.")
+        return
+
     relaymsg = {
         'id': 'relay',
         'device' : shellyname,
@@ -82,6 +97,10 @@ def publishRelay(rel):
 
 def setRelay(num, state):
     global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing relay commands, we are not connected.")
+        return
 
     relaymsg = {
         'id': 20,
@@ -135,11 +154,11 @@ def processData(eldata):
                 publish = False
                 if not (params.get(swname) is None):
                     relaydata =  params[swname]
-                    print(datetime.utcnow(),rel.index,"changed")
                     rel.ts = ts
                     if not (relaydata.get('output') is None):
                         rel.initdone = True
                         rel.state = relaydata['output']
+                        print(datetime.utcnow(),rel.index,"changed to", rel.state)
                         publish = True
 
                     if not (relaydata.get("apower") is None):
@@ -155,33 +174,27 @@ def processData(eldata):
                     if publish == True:
                         publishRelay(rel)
 
+
 def on_message(client, userdata, message):
     msgqueue.put(message.payload)
 
 
 def on_connect(client, userdata, flags, rc):
-    global connected
-    if (rc==0):
-        connected = True
-    else:
-        print(datetime.utcnow(),"connection failed, rc=",rc)
-        connected = False
+    global shellyname
+
+    print(datetime.utcnow(),"connected, rc=", rc)
+    topics = [(mqtt_broker.topic_prefix + "/relay/" + shellyname + "/setstate",0),
+          (shellyname + "/events/rpc",0)]
+    client.subscribe(topics)
 
 
 def on_disconnect(client, userdata, rc):
-    print(datetime.utcnow(),"disconnected")
-    if rc != 7:
-        try:
-            client.reconnect()
-        except:
-            print(datetime.utcnow(),"reconnect failed, waiting...")
-            time.sleep(30)
-    else:
-        time.sleep(1)
+    print(datetime.utcnow(),"disconnected, rc=", rc)
 
 
 def on_publish(client, userdata,result):
     pass
+
 
 if (len(sys.argv) < 2):
     print("need shelly symbolic name as parameter")
@@ -193,20 +206,17 @@ else:
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client(shellyname)
+client = mqtt.Client(shellyname + str(os.getpid()))
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
+
 
 client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-
-topics = [(mqtt_broker.topic_prefix + "/relay/" + shellyname + "/setstate",0),
-          ( shellyname + "/events/rpc",0)]
-client.subscribe(topics)
 
 waitTime=5 # first statistics after 5 sec
 prevStatisticsTS = 0

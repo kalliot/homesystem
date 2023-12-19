@@ -333,16 +333,26 @@ def logger(client, userdata, level, buff):
 
 
 def on_connect(client, userdata, flags, rc):
-    global connected
+    global shellynumber, boilertempreader, magnetvalve
+
     if (rc==0):
-        connected = True
+        topics = [
+                (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
+                (mqtt_broker.topic_prefix + "/heating/setup",0),
+                (mqtt_broker.topic_prefix + "/elprice/current",0),
+                (mqtt_broker.topic_prefix + "/elprice/boosthours",0),
+                (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
+                (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/state/" + magnetvalve,0),
+                (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/#",0)
+        ]
+        client.subscribe(topics)
+
     else:
-        print("connection failed, rc=",rc)
-        connected = False
+        print(datetime.utcnow(),"connection failed, rc=",rc)
 
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    print(datetime.utcnow(),"disconnected, rc=", rc)
 
 
 def on_publish(client, userdata,result):
@@ -361,17 +371,6 @@ client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
 print(datetime.utcnow(), "Start")
 client.loop_start()
-
-topics = [(mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
-          (mqtt_broker.topic_prefix + "/heating/setup",0),
-          (mqtt_broker.topic_prefix + "/elprice/current",0),
-          (mqtt_broker.topic_prefix + "/elprice/boosthours",0),
-          (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
-          (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/state/" + magnetvalve,0),
-          (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/#",0)]
-
-
-client.subscribe(topics)
 
 while True:
     now = time.time()

@@ -73,6 +73,10 @@ class temperature:
         if newval == self.value:
             return
 
+        if client.is_connected() == False:
+            print(datetime.utcnow(),"not publishing change request, we are not connected.")
+            return
+
         now = int(time.time())
         diff = now - self.changed
         if diff < 1800:
@@ -133,6 +137,11 @@ def checkLoTemp():
 
 
 def publishError(category, code, description):
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing errir message, we are not connected.")
+        return
+
     now = int(time.time())
 
     jsonRec = {
@@ -181,6 +190,10 @@ def setAuxHeater(state):
 
     if auxonly == state:
         return False
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing aux heater request, we are not connected.")
+        return
 
     now = time.time()
     diff = now - auxchanged
@@ -370,7 +383,6 @@ def on_message(client, userdata, message):
 
 
 def on_connect(client, userdata, flags, rc):
-    global connected
     if (rc==0):
         topics = [
             (mqtt_broker.topic_prefix + "/+/setup",     0),
@@ -381,10 +393,8 @@ def on_connect(client, userdata, flags, rc):
             ("ems-esp/thermostat_data",                       0)
         ]
         client.subscribe(topics)
-        connected = True
     else:
         print("connection failed, rc=",rc)            
-        connected = False
 
 
 def on_disconnect(client, userdata, rc):
