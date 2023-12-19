@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+
+
+import os
+import json
+import time
+from datetime import datetime
+from queue import Queue
+import sys
+import paho.mqtt.client as mqtt 
+
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+
+buttonserver = "000000009cfd5636"
+prevts = 0
+
+def relayState(state):
+    now = int(time.time())
+    relaymsg = {
+        'id': 'relay',
+        'ts': now,
+        'contact': 0,
+        'state': state
+    }
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/shellyplus1pm/setstate"
+    client.publish(setrelaytopic,json.dumps(relaymsg), qos=0) # important: dont use retain flag.
+
+
+def processData(data):
+    global prevts
+
+    if data['id'] == "button":
+        if data['state'] == True:      # button pressed
+            prevts = int(time.time())
+        else:                          # button released
+            now = int(time.time())
+            diff = now - prevts
+            presslen = int(data['presslen'])
+            if diff < 10 and presslen < 2:
+                print(datetime.utcnow(), "Putting relay on")    
+                relayState(True)
+            if diff < 10 and presslen >= 2:
+                print(datetime.utcnow(), "Putting relay off")    
+                relayState(False)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global buttonserver
+
+    if rc == 0:
+        topics = [(mqtt_broker.topic_prefix + "/" + buttonserver + "/button", 0)]
+        client.subscribe(topics)
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+
+
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client("button2relay" + str(os.getpid()))
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+
+
+while True:
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        msg = json.loads(data)
+        processData(msg)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise        

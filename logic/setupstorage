@@ -1,0 +1,113 @@
+#!/usr/bin/env python
+
+
+import os
+import json
+import time
+from datetime import datetime
+from queue import Queue
+import sys
+import paho.mqtt.client as mqtt 
+
+rundir = "/home/pi/"
+setupfile = "heatsetup.json"
+
+sys.path.insert(1, rundir + "config")
+from setup import *
+
+lastRead = 0
+
+def processData(data):
+    global lastRead
+
+    if data['id'] == "heatsetup":
+        now = int(time.time())
+        if now - lastRead < 2:
+            print(datetime.utcnow(),"don't write, setup was just refreshed from disk")    
+            return
+        print(datetime.utcnow(),"got heatsetup, writing it to disk")
+        f = open(rundir + setupfile,"w")
+        f.write(json.dumps(data))
+        f.close()
+        
+
+
+def sendSetup():
+    global lastRead
+
+    try:
+        f = open(rundir + "heatsetup.json","r")
+        data = f.read()
+    except:
+        print(datetime.utcnow(),"maybe",rundir + setupfile, "does not exist.")            
+        return
+
+    topic = mqtt_broker.topic_prefix + "/heating/setup"
+    client.publish(topic, data, qos=0, retain=True) 
+    print(datetime.utcnow(),"read heatsetup from disk and insert it to topic")
+    f.close()
+    lastRead = int(time.time())
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
+
+
+msgqueue = Queue(maxsize=3)
+
+
+client = mqtt.Client("setupstorage" + str(os.getpid()))
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+sendSetup()
+
+topics = [(mqtt_broker.topic_prefix + "/heating/setup",0)]
+client.subscribe(topics)
+
+
+while True:
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        msg = json.loads(data)
+        processData(msg)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise        
