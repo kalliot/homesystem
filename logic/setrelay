@@ -22,6 +22,7 @@ avgconsumption = currentconsumption
 shellynumber = 1
 relayonminimum = 120                           # put is on minimum seconds
 burner_max_preheat = 180
+elhysteresis = 200
 flameburning = False
 magnetvalve = "33"
 boostedhours = []
@@ -65,7 +66,7 @@ class heater:
         client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
         self.changets = now
         self.state = newState
-        time.sleep(1)  # send consecutive relay orders with 1 sec delay
+        time.sleep(2)  # send consecutive relay orders with 1 sec delay
 
 
 
@@ -146,6 +147,7 @@ def elheaterOnByProduction(elHeater):
 
 def elheaterOn(elHeater, max):
     global currentconsumption, avgconsumption, boilertemp, centertemp
+    global elhysteresis
 
     if elHeater.boosted:
         limit = elHeater.lowtemp + 5
@@ -165,8 +167,8 @@ def elheaterOn(elHeater, max):
                 print(datetime.utcnow(),"Putting stock heater on")
                 elHeater.setState(True)
 
-    elif currentconsumption  < (max - elHeater.power):
-        print(datetime.utcnow(),"currentconsumption:",currentconsumption,"is less than",max - elHeater.power)
+    elif avgconsumption  < (max - elHeater.power - elhysteresis):
+        print(datetime.utcnow(),"currentconsumption:",currentconsumption,"is less than",max - elHeater.power - 200)
         print(datetime.utcnow(),"Putting stock heater off")
         elHeater.setState(False)
 
@@ -334,6 +336,7 @@ def logger(client, userdata, level, buff):
 
 def on_connect(client, userdata, flags, rc):
     global shellynumber, boilertempreader, magnetvalve
+    global mqtt_broker
 
     if (rc==0):
         topics = [
