@@ -8,7 +8,7 @@ from datetime import datetime
 from queue import Queue
 import sys
 import paho.mqtt.client as mqtt 
-
+import RPi.GPIO as GPIO
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
@@ -16,8 +16,12 @@ from setup import *
 
 buttonserver = "000000009cfd5636"
 prevts = 0
+activeled = 5
+
 
 def relayState(state):
+    global mqtt_broker
+
     now = int(time.time())
     relaymsg = {
         'id': 'relay',
@@ -32,6 +36,14 @@ def relayState(state):
 def processData(data):
     global prevts
 
+    if data['id'] == "relay":
+        state = data['state']
+        print(datetime.utcnow(), "Relay state changed to", state)
+        if state == True:
+            GPIO.output(activeled, GPIO.LOW)
+        else:
+            GPIO.output(activeled, GPIO.HIGH)
+
     if data['id'] == "button":
         if data['state'] == True:      # button pressed
             prevts = int(time.time())
@@ -42,6 +54,7 @@ def processData(data):
             if diff < 10 and presslen < 2:
                 print(datetime.utcnow(), "Putting relay on")    
                 relayState(True)
+
             if diff < 10 and presslen >= 2:
                 print(datetime.utcnow(), "Putting relay off")    
                 relayState(False)
@@ -52,10 +65,11 @@ def on_message(client, userdata, message):
 
 
 def on_connect(client, userdata, flags, rc):
-    global buttonserver
+    global buttonserver, mqtt_broker
 
     if rc == 0:
-        topics = [(mqtt_broker.topic_prefix + "/" + buttonserver + "/button", 0)]
+        topics = [(mqtt_broker.topic_prefix + "/" + buttonserver + "/button", 0),
+                  (mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state", 0)]
         client.subscribe(topics)
     else:
         print(datetime.utcnow(),"connection failed, rc=",rc)
@@ -65,6 +79,10 @@ def on_disconnect(client, userdata, rc):
     print(datetime.utcnow(),"disconnected, rc=", rc)
 
 
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(activeled, GPIO.OUT)
 
 msgqueue = Queue(maxsize=10)
 
@@ -77,8 +95,6 @@ client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
 print(datetime.utcnow(), "Start")
 client.loop_start()
-
-
 
 
 while True:

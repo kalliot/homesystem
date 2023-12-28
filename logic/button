@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import json
+import os
 import time
 from datetime import datetime
 from queue import Queue
@@ -18,6 +19,7 @@ presslen = 0
 
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(button,GPIO.IN)
+
 
 def getserial():
   cpuserial = "0000000000000000"
@@ -56,9 +58,9 @@ def sendData(data):
     global serialnumber
 
     msg = json.dumps(data)
-    topic = mqtt_broker.topic_prefix + serialnumber+"/button"
+    topic = mqtt_broker.topic_prefix + "/" + serialnumber+ "/button"
     print(datetime.now(), "Sending")
-    client.publish(topic, msg, qos=0)
+    client.publish(topic, msg, qos=0, retain=True)
 
 
 def on_disconnect(client, userdata, rc):
@@ -78,7 +80,7 @@ GPIO.add_event_detect(button, GPIO.BOTH, callback=my_callback)
 msgqueue = Queue(maxsize=5)    
 serialnumber = getserial()
 
-client = mqtt.Client("button handler" + serialnumber)
+client = mqtt.Client("button handler" + serialnumber + ":" + str(os.getpid()))
 client.on_disconnect = on_disconnect
 
 client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
