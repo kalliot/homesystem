@@ -10,11 +10,12 @@ import json
 import sys
 from queue import Queue, Empty
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 boilertempreader = "5bcae4"
 centertempsensor = "281672574e13c75"
+esptempsensor = "288f83a130097"
 cloud_refresh_interval = 60
 
 class overview:
@@ -24,6 +25,7 @@ class overview:
         self.outdoortemp    = 0
         self.radiatortemp   = 0
         self.storetemp      = 0
+        self.esptemp        = 0
         self.boilertemp     = 0
         self.electricity    = 0
         self.waterleak      = "None"
@@ -42,6 +44,7 @@ class overview:
                 "outdoor"    :   self.outdoortemp,
                 "radiator" :     self.radiatortemp,
                 "store"    :     self.storetemp,
+                "esp"       :    self.esptemp,
                 "boiler"    :    self.boilertemp,
                 "electricity":   self.electricity,
                 "waterleak":     self.waterleak
@@ -101,6 +104,9 @@ def parseHomeTopics(data):
     if id == "temperature":
         if data['sensor'] == centertempsensor:
             compiled.boilertemp = round(getJsonNumericVar(data,'value',compiled.boilertemp),2)
+            compiled.send()
+        if data['sensor'] == esptempsensor:
+            compiled.esptemp = round(getJsonNumericVar(data,'value',compiled.esptemp),2)
             compiled.send()
 
     elif id == "elproduction":
