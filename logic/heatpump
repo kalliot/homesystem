@@ -15,6 +15,8 @@ from setup import *
 
 desiredroomtemp = 21.5
 desiredfloortemp = 21.5
+heatpump_min_temp = -17
+heatpump_restore_temp = -13
 outtemp = 0.0
 auxonly = False
 auxchanged = 0
@@ -313,6 +315,10 @@ def tuneCompressor():
     if roomtemp.value == 0:
         return False # in init state.
 
+    if outtemp < heatpump_min_temp:
+        setAuxHeater(True)
+        return True
+
     if hsetup.eltype == 'stock':
         compressorHysteresis = 0.5
         nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice, 2)
@@ -324,7 +330,7 @@ def tuneCompressor():
                 print(datetime.utcnow(), "Burner price is now enough low:",burnerprice, "compared to compressor price",compressorOffPrice,". We just burn heatoil.")
                 ret = True
         else:
-            if burnerprice > compressorOnPrice:
+            if (burnerprice > compressorOnPrice) and (outtemp > heatpump_restore_temp):
                 if setAuxHeater(False):
                     print(datetime.utcnow(), "Burner price:",burnerprice,"is higher than compressor:",compressorOnPrice,". We use aw compressor")
                     ret = True
