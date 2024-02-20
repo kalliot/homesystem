@@ -26,6 +26,8 @@ elhysteresis = 200
 flameburning = False
 magnetvalve = "33"
 boostedhours = []
+hotWaterTemp = 0.0
+prevHotWaterTemp = 0.0
 
 class heatSetup:
     def __init__(self):
@@ -36,6 +38,8 @@ class heatSetup:
         self.elselcommission = 0.24
         self.maxconsumption  = -6000                         # start heating of waterboiler, only if consumption is bigger than this.
         self.heatoilprice    = 1.61                          # eur/liter
+        self.hotwaterboost   = 2.0                           # if hotwater temp is increasing, raise burner start temperature
+
 
 hsetup = heatSetup()
 
@@ -77,6 +81,7 @@ elheater4kw = heater(1, 2, 55.0, 2.0, 4000)
 boilertempreader = "5bcae4"
 boilertempsensor = "28b867746008f"
 centertempsensor = "281672574e13c75"
+hotwatertempsensor = "28e1747360083"
 boilertemp = 0.0
 centertemp = 0.0
 
@@ -150,7 +155,7 @@ def elheaterOn(elHeater, max):
     global elhysteresis
 
     if elHeater.boosted:
-        limit = elHeater.lowtemp + 5
+        limit = elHeater.lowtemp + 5 # TODO: put this boost amount to setup params.
     else:
         limit = elHeater.lowtemp
 
@@ -162,7 +167,6 @@ def elheaterOn(elHeater, max):
 
     if elHeater.state == False:
         if avgconsumption > max:
-            print(datetime.utcnow(),"comparing if boilertemp:",boilertemp,"is <= limit:", limit)
             if boilertemp <= limit:
                 print(datetime.utcnow(),"Putting stock heater on")
                 elHeater.setState(True)
@@ -189,7 +193,7 @@ def checkBoost():
 def processData(eldata):
     global taxedprice, sellprice, currentconsumption, boilertemp, centertemp
     global avgconsumption, W15min, quart, flameburning
-    global relayonminimum, elheater2kw, elheater4kw
+    global relayonminimum, elheater2kw, elheater4kw, hotWaterTemp, prevHotWaterTemp
 
     if not (eldata.get('id') is None):
         id = eldata['id']
@@ -202,7 +206,7 @@ def processData(eldata):
                 print(datetime.utcnow(),"added",boostrec['time'],"to boostedhours array")
             elheater4kw.boosted = checkBoost()
 
-        if id == 'elprice':
+        elif id == 'elprice':
             current_date = datetime.utcnow().strftime("%Y%m%d%H")
             if (current_date != eldata['day']):
                 publishError("datetime", 1001, "current prices timestamp is not valid:" + eldata['day'])
@@ -223,6 +227,7 @@ def processData(eldata):
             hsetup.elprice          = getJsonNumericVar(eldata, 'elprice',          hsetup.elprice)
             hsetup.maxconsumption   = getJsonNumericVar(eldata, 'maxconsumption',   hsetup.maxconsumption)
             hsetup.heatoilprice     = getJsonNumericVar(eldata, 'heatoilprice',     hsetup.heatoilprice)
+            hsetup.hotwaterboost    = getJsonNumericVar(eldata, 'hotwaterboost',    hsetup.hotwaterboost)
 
             burner.lowtemp          = getJsonNumericVar(eldata, 'burner_lowtemp',    burner.lowtemp)
             burner.hysteresis       = getJsonNumericVar(eldata, 'burner_hysteresis', burner.hysteresis)
@@ -261,6 +266,15 @@ def processData(eldata):
                 boilertemp = float(eldata['value'])
             elif eldata['sensor'] == centertempsensor:
                 centertemp = float(eldata['value'])
+            elif eldata['sensor'] == hotwatertempsensor:
+                now = time.time()
+                hotWaterTemp = float(eldata['value'])
+                if prevHotWaterTemp != 0.0:
+                    if ((hotWaterTemp - prevHotWaterTemp) > 0.4) and (burner.state == False): # don't turn on boost, if burner is already runnning
+                        burner.boosted = True
+                    elif ((hotWaterTemp - prevHotWaterTemp) < 0.0) and ((now - burner.changets) > 600):
+                        burner.boosted = False
+                prevHotWaterTemp = hotWaterTemp
 
         elif id == "state":
             now = time.time()
@@ -296,7 +310,6 @@ def processData(eldata):
 
             if hsetup.eltype == 'stock':
                 nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
-                print(datetime.utcnow(),"nettoprice:", nettoprice)
                 if sellprice < nettoprice:
                     elheaterOnByProduction(elheater2kw)
                 else:
@@ -310,11 +323,17 @@ def processData(eldata):
 
 
             # in case boiler temp drops too low, put the burner on anyway.
-            if centertemp <= burner.lowtemp:
+            starttemp = burner.lowtemp
+            if burner.boosted:
+                starttemp += hsetup.hotwaterboost
+            if centertemp <= starttemp:
                 burner.setState(True)
-
-            elif centertemp >= (burner.lowtemp + burner.hysteresis):
-                burner.setState(False)
+            else:
+                stoptemp = burner.lowtemp + burner.hysteresis
+                if burner.boosted:
+                    stoptemp += hsetup.hotwaterboost
+                if centertemp >= stoptemp:
+                    burner.setState(False)
 
     print(datetime.utcnow(),"sellprice:", sellprice, end=", ")
     print("consumption:", currentconsumption, end=", ")
