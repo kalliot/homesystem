@@ -22,6 +22,7 @@ auxonly = False
 auxchanged = 0
 hitemphours = []
 lotemphours = []
+useboosthourstemp = -4
 taxedprice = 0.0
 lastemsdata = time.time()
 
@@ -241,9 +242,10 @@ def parseEmsTopics(topic, data):
     return False
 
 def desiredTemperatures():
-    global desiredroomtemp, desiredfloortemp, auxonly
+    global desiredroomtemp, desiredfloortemp
+    global auxonly, outtemp, useboosthourstemp
 
-    if auxonly == False:
+    if auxonly == False and outtemp > useboosthourstemp: # when it is colder, this affects only for aux mix => not needed.
         if checkHiTemp():
             desiredroomtemp   = hsetup.hiroom
             desiredfloortemp  = hsetup.hifloor
