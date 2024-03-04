@@ -21,7 +21,7 @@ quart = 0
 avgconsumption = currentconsumption
 shellynumber = 1
 relayonminimum = 120                           # put is on minimum seconds
-burner_max_preheat = 180
+burner_max_preheat = 600
 elhysteresis = 200
 flameburning = False
 magnetvalve = "33"
@@ -60,6 +60,7 @@ class heater:
             return
 
         now = int(time.time())
+
         relaymsg = {
             'id': 'relay',
             'contact': self.relay,
@@ -70,7 +71,7 @@ class heater:
         client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
         self.changets = now
         self.state = newState
-        time.sleep(2)  # send consecutive relay orders with 1 sec delay
+        time.sleep(3)  # send consecutive relay orders with 3 sec delay
 
 
 
@@ -172,7 +173,7 @@ def elheaterOn(elHeater, max):
                 elHeater.setState(True)
 
     elif avgconsumption  < (max - elHeater.power - elhysteresis):
-        print(datetime.utcnow(),"currentconsumption:",currentconsumption,"is less than",max - elHeater.power - 200)
+        print(datetime.utcnow(),"currentconsumption:",currentconsumption,"is less than",max - elHeater.power - elhysteresis)
         print(datetime.utcnow(),"Putting stock heater off")
         elHeater.setState(False)
 
@@ -302,7 +303,7 @@ def processData(eldata):
         else:
             if hsetup.eltype == 'fixed':
                 elheater4kw.setState(False)
-                if sellprice < (hsetup.elprice + hsetup.transferprice):
+                if (sellprice - hsetup.elselcommission) < (hsetup.elprice + hsetup.transferprice):
                     elheaterOnByProduction(elheater2kw)
                 else:
                     # if price is high, dont care about consumption, just keep relay off.
@@ -310,13 +311,13 @@ def processData(eldata):
 
             if hsetup.eltype == 'stock':
                 nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
-                if sellprice < nettoprice:
+                if (hsetup.heatoilprice * 10.8) > (sellprice - hsetup.elselcommission): # Sellprice should be compared to heating with oil
                     elheaterOnByProduction(elheater2kw)
                 else:
                     elheater2kw.setState(False)
 
                 # next, heating with low electricity stock price
-                if elheater2kw.state == False and (hsetup.heatoilprice * 10) > nettoprice:
+                if elheater2kw.state == False and (hsetup.heatoilprice * 10.8) > nettoprice:
                     elheaterOn(elheater4kw, hsetup.maxconsumption)
                 else:
                     elheater4kw.setState(False)
@@ -335,7 +336,7 @@ def processData(eldata):
                 if centertemp >= stoptemp:
                     burner.setState(False)
 
-    print(datetime.utcnow(),"sellprice:", sellprice, end=", ")
+    print(datetime.utcnow(),"sellprice:", sellprice - hsetup.elselcommission, end=", ")
     print("consumption:", currentconsumption, end=", ")
     print("avgconsumption:", avgconsumption, end=", ")
     print("boilertemp:", boilertemp, end=", ")
@@ -397,9 +398,9 @@ client.loop_start()
 while True:
     now = time.time()
     diff = int(now - burner.changets)
-    if burner.state == True and flameburning == False and diff > burner_max_preheat:
+    if burner.state == True and flameburning == False and diff > burner_max_preheat and centertemp < burner.lowtemp:
         if burner.faultstate == False:
-            publishError("burner", 3001, "burner has not started, even preheat started " + str(diff) + " seconds ago.")
+            publishError("burner", 3001, "Burner fault or magnetvalve sensor fault. Preheat started " + str(diff) + " seconds ago.")
             print(datetime.utcnow(),"oil burner has not started")
         burner.faultstate = True
 
