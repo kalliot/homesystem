@@ -54,6 +54,7 @@
               ',"solelheater_hysteresis":' + $('#solelstop').val() + 
               ',"stockelheater_lowtemp":' + $('#stockelstart').val() + 
               ',"stockelheater_hysteresis":' + $('#stockelstop').val() + 
+              ',"hotwaterboost":' + $('#hotwaterboost').val() +
               ',"burner_lowtemp":' + $('#burnerstart').val() + 
               ',"burner_hysteresis":' + $('#burnerstop').val() + '}'
 
@@ -68,11 +69,11 @@
         mqtt.subscribe("home/kallio/elprice/current");
         mqtt.subscribe("home/kallio/phase/all/elproduction");
         mqtt.subscribe("home/kallio/error/#");
-        mqtt.subscribe("home/kallio/esp5bcae4/parameters/temperature/#");
+        mqtt.subscribe("home/kallio/esp5bcae4/parameters/#");
 
         $('#topic').val(topic);
         var d = new Date();
-        $('#errors').append("Mqtt :" + d.toLocaleString() + " Connected\r\n"); 
+        $('#errors').append("Mqtt :" + d.toLocaleString() + " Connected\r\n");
     }
 
 
@@ -80,7 +81,7 @@
         setTimeout(MQTTconnect, reconnectTimeout);
         $('#status').val("connection lost: " + response.errorMessage + ". Reconnecting");
         var d = new Date();
-        $('#errors').append("Mqtt:" + d.toLocaleString() + "connection lost\r\n"); 
+        $('#errors').append("Mqtt:" + d.toLocaleString() + "connection lost\r\n");
     };
 
 
@@ -156,6 +157,7 @@
             $('#stockelstop').val(obj.stockelheater_hysteresis);
             $('#burnerstart').val(obj.burner_lowtemp);
             $('#burnerstop').val(obj.burner_hysteresis);
+            $('#hotwaterboost').val(obj.hotwaterboost);
 
             connectSlider('#relayonminimum','#relayMinSeconds');
             connectSlider('#solelstart','#solElTempStartRange');
@@ -164,6 +166,7 @@
             connectSlider('#stockelstop','#stockElTempStopRange');
             connectSlider('#burnerstart','#burnerTempStartRange');
             connectSlider('#burnerstop','#burnerTempStopRange');
+            connectSlider('#hotwaterboost','#hotWaterBoostRange');
         }
         
         if (obj.id == "relay")
@@ -182,8 +185,9 @@
                 break;
 
                 case 3:
-                    $('#burnerstate').html(obj.state ? "On" : "Off");
-                    $("#burnerstate").css("background", obj.state ? "red" : "blue");
+                    $('#burnerstate').html(obj.state ? "Preheat" : "Off");
+                    $("#burnerstate").css("background", obj.state ? "yellow" : "blue");
+                    $("#burnerstate").css("color", obj.state ? "black" : "white");
                 break;
                 
                 default:
@@ -213,16 +217,21 @@
                 setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
             }
         }
-
+        if (obj.id == "state" && obj.sensor == 33)
+        {
+            $('#burnerstate').html(obj.value ? "On" : "Off");
+            $("#burnerstate").css("background", obj.value ? "red" : "blue");
+            $("#burnerstate").css("color", "white");
+        }
         if (obj.id == "solarerror")
         {
             var d = new Date(obj.ts * 1000);
             $('#errors').append("solar: " + d.toLocaleString() + ":" + obj.description + "\r\n");
         }
-        if (obj.id == "relayerror")
+        if (obj.id == "error")
         {
             var d = new Date(obj.ts * 1000);
-            $('#errors').append("relay: " + d.toLocaleString() + ":" + obj.description + "\r\n"); 
+            $('#errors').append(obj.dev, " : " + d.toLocaleString() + ":" + obj.description + "\r\n");
         }
     };
 
@@ -374,9 +383,22 @@
                            step="0.1" 
                            id="burnerTempStopRange" 
                            oninput="connectSlider('#burnerTempStopRange','#burnerstop')">
+                </td></tr>
+
+            <tr><td><label for="hotwaterboost">Burner boost for need of hotwater:</label></td>
+                <td><input type="text"
+                    id="hotwaterboost"
+                    size=3
+                    onchange="connectSlider('#hotwaterboost','#hotWaterBoostRange')">
                 </td>
+                <td><input type="range"
+                    min="0.0"
+                    max="4.0"
+                    step="0.1"
+                    id="hotWaterBoostRange"
+                    oninput="connectSlider('#hotWaterBoostRange','#hotwaterboost')">
+                 </td></tr>
             </tr>
-                        
             <tr><td><button onClick="sendsetup()">Update</button></td></tr>
             </table>
         </form>
