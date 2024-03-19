@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+
+# oilconsumption
+# Aggregate hourly heatoil consumption liters to daily amount
+# This script is started daily from cron.
+# Only once a day is enough, possibly just after the day has changed.
+
+from datetime import datetime
+import influxdb_client
+import sys
+import time
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+
+sys.path.insert(1, '../config')
+from setup import *
+
+
+
+client = influxdb_client.InfluxDBClient(
+    url=influx_credentials.url,
+    org=influx_credentials.org,
+    token=influx_credentials.token
+)
+
+
+# saveDaily
+# store sum of consumed heatoil of one day to daily bucket
+
+def saveDaily(ts, liters):
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+    p = influxdb_client.Point("liters").tag("name","heatoil").field("consumed", liters).time(ts, write_precision=WritePrecision.S)
+    write_api.write(bucket="daily", org=influx_credentials.org, record=p)
+
+
+# daysToSearch
+# find out the timestamp of last stored data to daily bucket.
+# TODO: what if daily bucket is empty at the start?
+
+def daysToSearch(qapi):
+    query = 'from(bucket:"daily")\
+    |> range(start: -365d)\
+    |> last()\
+    |> filter(fn:(r) => r._measurement == "liters")'
+
+    result = qapi.query(org=influx_credentials.org, query=query)
+    for table in result:
+        for record in table.records:
+            lastdate = record.get_time().strftime("%Y%m%d")
+            epoch = int(time.mktime(time.strptime(lastdate, "%Y%m%d")))
+            now = int(time.time())
+            secondDiff = now - epoch
+    return int(secondDiff / 86400)
+
+
+def fromHour2Day(qapi, daycnt):
+    query = 'from(bucket:"forever")\
+    |> range(start: -' + str(daycnt) + 'd) \
+    |> filter(fn:(r) => r._measurement == "liters")\
+    |> filter(fn:(r) => r.name == "heatoil")\
+    |> filter(fn:(r) => r._field == "consumed")'
+
+
+    result = qapi.query(org=influx_credentials.org, query=query)
+    currdate = ""
+    daysum = 0
+    insertcnt = 0
+
+    for table in result:
+        for record in table.records:
+            if currdate == "":
+                currdate = record.get_time().strftime("%Y%m%d")
+            elif currdate != record.get_time().strftime("%Y%m%d"):
+                epoch = int(time.mktime(time.strptime(currdate, "%Y%m%d")))        
+                print(datetime.now(), currdate, round(daysum,2))
+                saveDaily(epoch, daysum)
+                currdate = record.get_time().strftime("%Y%m%d")
+                daysum = 0
+                insertcnt += 1
+            daysum += record.get_value()
+    epoch = int(time.mktime(time.strptime(currdate, "%Y%m%d")))
+    print(datetime.now(), currdate, round(daysum,2))
+    saveDaily(epoch, daysum)
+    insertcnt += 1
+    return insertcnt
+
+
+
+
+print(datetime.now(),"Start")
+query_api = client.query_api()
+
+# Take one more day, because its previous value may be incomplete
+# (script was run before the day ended)
+
+days = daysToSearch(query_api) + 1
+lines = fromHour2Day(query_api, days)
+print(datetime.now(),"Done,", lines, "lines inserted.")
+
+
