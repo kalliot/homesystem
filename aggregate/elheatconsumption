@@ -1,0 +1,110 @@
+#!/usr/bin/env python
+
+# oilconsumption
+# Aggregate hourly heatoil consumption liters to daily amount
+# This script is started daily from cron.
+# Only once a day is enough, possibly just after the day has changed.
+
+from datetime import datetime
+import influxdb_client
+import sys
+import time
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+
+
+client = influxdb_client.InfluxDBClient(
+    url=influx_credentials.url,
+    org=influx_credentials.org,
+    token=influx_credentials.token
+)
+
+
+# saveDaily
+# store sum of consumed heatoil of one day to daily bucket
+
+def saveDaily(ts, kw, tag):
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+    p = influxdb_client.Point("energy").tag("name", tag).field("kw", kw).time(ts, write_precision=WritePrecision.S)
+    write_api.write(bucket="daily", org=influx_credentials.org, record=p)
+
+
+# daysToSearch
+# find out the timestamp of last stored data to daily bucket.
+
+def daysToSearch(qapi, tag):
+    query = 'from(bucket:"daily")\
+    |> range(start: -365d)\
+    |> last()\
+    |> filter(fn:(r) => r._measurement == "energy")\
+    |> filter(fn:(r) => r.name == "' + tag + '")'
+
+    result = qapi.query(org=influx_credentials.org, query=query)
+    secondDiff = -1
+    for table in result:
+        for record in table.records:
+            lastdate = record.get_time().strftime("%Y%m%d")
+            epoch = int(time.mktime(time.strptime(lastdate, "%Y%m%d")))
+            now = int(time.time())
+            secondDiff = now - epoch
+    if secondDiff != -1:
+        ret = int(secondDiff / 86400)
+    else: 
+        ret = 365    
+    return ret
+
+
+def fromHour2Day(qapi, daycnt, tag):
+    query = 'from(bucket:"forever")\
+    |> range(start: -' + str(daycnt) + 'd) \
+    |> filter(fn:(r) => r._measurement == "electricity")\
+    |> filter(fn:(r) => r.name == "' + tag +'")\
+    |> filter(fn:(r) => r._field == "kwh")'
+
+
+    result = qapi.query(org=influx_credentials.org, query=query)
+    currdate = ""
+    daysum = 0
+    insertcnt = 0
+
+    for table in result:
+        for record in table.records:
+            if currdate == "":
+                currdate = record.get_time().strftime("%Y%m%d")
+            elif currdate != record.get_time().strftime("%Y%m%d"):
+                epoch = int(time.mktime(time.strptime(currdate, "%Y%m%d")))        
+                print(datetime.now(), currdate, round(daysum,2))
+                saveDaily(epoch, daysum, tag)
+                currdate = record.get_time().strftime("%Y%m%d")
+                daysum = 0
+                insertcnt += 1
+            daysum += record.get_value()
+    epoch = int(time.mktime(time.strptime(currdate, "%Y%m%d")))
+    print(datetime.now(), currdate, round(daysum,2))
+    saveDaily(epoch, daysum, tag)
+    insertcnt += 1
+    return insertcnt
+
+print(datetime.now(),"Start")
+query_api = client.query_api()
+
+# Take one more day, because its previous value may be incomplete
+# (script was run before the day ended)
+
+stocklines = 0
+days = daysToSearch(query_api,"stockheat") + 1
+stocklines = fromHour2Day(query_api, days, "stockheat")
+
+sollines = 0
+days = daysToSearch(query_api,"solheat") + 1
+sollines = fromHour2Day(query_api, days, "solheat")
+
+print(datetime.now(),"Done,", stocklines, "stock electricity heating lines inserted.")
+print(datetime.now(),"Done,", sollines, "solar electricity heating lines inserted.")
+
+
