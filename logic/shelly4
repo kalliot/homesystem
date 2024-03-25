@@ -7,7 +7,7 @@ import paho.mqtt.client as mqtt
 from queue import Queue, Empty
 import sys
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 shellyname = "shelly4"
@@ -18,12 +18,14 @@ class relay:
         self.index = index
         self.state = False
         self.ts = 0
+        self.changets = int(time.time())
         self.initdone = False
         self.energy = 0.0
         self.voltage = 0
         self.temperature = 0
         self.current = 0
         self.count = 0
+        self.duration = 0
 
 relays = [relay(0),
           relay(1),
@@ -76,6 +78,7 @@ def publishRelay(rel):
         'id': 'relay',
         'device' : shellyname,
         'contact': rel.index,
+        'duration': rel.duration,
         'state': rel.state,
         'ts': rel.ts
     }
@@ -140,8 +143,11 @@ def processData(eldata):
                         state = relaydata['output']
                         if state != rel.state or rel.initdone == False:
                             print(datetime.utcnow(),rel.index,"changed")
+                            now = int(time.time())
                             rel.initdone = True
                             rel.state = state
+                            rel.duration = now - rel.changets
+                            rel.changets = now
                             rel.ts = ts
                             publishRelay(rel)
                     if not (relaydata.get('aenergy') is None):
