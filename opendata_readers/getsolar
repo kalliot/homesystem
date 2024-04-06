@@ -1,134 +1,23 @@
 #!/usr/bin/env python
 
-import hashlib
-from hashlib import sha1
-import hmac
-import base64
-import time
-from datetime import datetime
-from datetime import timezone
-import requests
-import os
+import asyncio
 import json
+import time
 import sys
-from queue import Queue, Empty
+import os
+from datetime import datetime
+from aiohttp import ClientSession
 import paho.mqtt.client as mqtt 
+from soliscloud_api import SoliscloudAPI
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
-
-prevTimestamp=0
-sunrise = 0
-sunset = sys.maxsize
-
-def on_message(client, userdata, message):
-    msgqueue.put(message.payload)
+prevTimestamp = 0
 
 
-def logger(client, userdata, level, buff):
-    print("level=",level," buff=",buff)
-
-
-def on_connect(client, userdata, flags, rc):
-    global connected
-    if (rc==0):
-        connected = True
-    else:
-        print("connection failed, rc=",rc)            
-        connected = False
-
-def on_disconnect(client, userdata, rc):
-    client.reconnect()
-
-def on_publish(client,userdata,result):
-    pass
-
-def processData(data):
-    global sunrise, sunset
-    msg = json.loads(data)
-    sunrise = int(msg['sunriseEpoch'])
-    sunset = int(msg['sunsetEpoch'])
-    
-
-
-def queryCloud():
-    VERB="POST"
-    Content_Type = "application/json"
-    KeyId = solis_credentials.key
-    secretKey = solis_credentials.secret
-    CanonicalizedResource = "/v1/api/inveterDetail"
-    Body='{"id":' + solis_credentials.userid + ', "sn":' + solis_credentials.serialnumber + '}' # userId = id number from the url bar of your inverter detail page; sn = the serial number of your inverter
-    Content_MD5 = base64.b64encode(hashlib.md5(Body.encode('utf-8')).digest()).decode('utf-8')
-
-    now = datetime.now(timezone.utc)
-    Date = now.strftime("%a, %d %b %Y %H:%M:%S GMT")
-
-    encryptStr = (VERB + "\n"
-        + Content_MD5 + "\n"
-        + Content_Type + "\n"
-        + Date + "\n"
-        + CanonicalizedResource)
-
-    h = hmac.new(secretKey.encode('utf-8'), msg=encryptStr.encode('utf-8'), digestmod=hashlib.sha1)
-
-    Sign = base64.b64encode(h.digest())
-
-    Authorization = "API " + KeyId + ":" + Sign.decode('utf-8')
-
-    requestStr = (VERB + " " + CanonicalizedResource + "\n"
-        + "Content-MD5: " + Content_MD5 + "\n"
-        + "Content-Type: " + Content_Type + "\n"
-        + "Date: " + Date + "\n"
-        + "Authorization: "+ Authorization + "\n"
-        + "Body：" + Body)
-
-    header = { "Content-MD5":Content_MD5,
-                "Content-Type":Content_Type,
-                "Date":Date,
-                "Authorization":Authorization
-                }
-
-    url = 'https://www.soliscloud.com:13333'
-    req = url + CanonicalizedResource
-    # add exception handling for requests.post!
-    try:
-        ret = requests.post(req, data=Body, headers=header)
-
-    except requests.exceptions.HTTPError as errh:
-        ret.status_code = 529
-        ret.reason = "Site is overloaded"
-
-    except requests.exceptions.ReadTimeout as errrt:
-        ret.status_code = 408
-        ret.reason = "Request timeout"
-
-    return ret
-
-
-def publishError(code, reason):
-    now = int(time.time())
-
-    jsonRec = {
-        "id"      :      "solarerror",
-        "dev"     :      solis_credentials.serialnumber,
-        "ts"      :      now,
-        "category":      "http",
-        "code"    :      code,
-        "description" :  reason
-    }
-    topic = mqtt_broker.topic_prefix + "/error/solarpower/" + solis_credentials.serialnumber
-    try:
-        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
-    except:
-        print("mqtt publish of error failed")
-
-
-def publishData(recData):
+def publishData(myData):
     global prevTimestamp
-
-    ret = False
-    myData = recData['data']
 
     if myData.get('dataTimestamp') is None:
         return 120
@@ -176,11 +65,11 @@ def publishData(recData):
             "acpower":      myData['pac'],
             "inverter_temp" : myData['inverterTemperature']
         }
-        topic = mqtt_broker.topic_prefix + "/" + solis_credentials.serialnumber + "/solarpower"
+        topic = mqtt_broker.topic_prefix + "/" + str(solis_credentials.serialnumber) + "/solarpower"
         try:
-            client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+            client.publish(topic,json.dumps(jsonRec), qos=0, retain=True)
         except:
-            print("mqtt publish failed")
+            print(datetime.now(),"mqtt publish failed")
 
     wait = 420 - int(diff / 1000)
     if (wait < 3 ):
@@ -189,13 +78,82 @@ def publishData(recData):
         wait = 120
     return wait
 
+def processData(data):
+    global sunrise, sunset
+    msg = json.loads(data)
+    sunrise = int(msg['sunriseEpoch'])
+    sunset = int(msg['sunsetEpoch'])
+    print(datetime.now(), "got clestials: sunrise", sunrise, "sunset", sunset)
 
-msgqueue = Queue(maxsize=4)    
+
+def on_message(client, userdata, message):
+    processData(message.payload)
+
+
+def logger(client, userdata, level, buff):
+    print(datetime.now(), "level=",level," buff=",buff)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        connected = True
+    else:
+        print(datetime.now(), "connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    client.reconnect()
+
+def on_publish(client,userdata,result):
+    pass
+
+    
+async def fetchSolar():
+    global sunrise, sunset
+
+    while True:
+        waitTime = 120
+        async with ClientSession() as websession:
+            try:
+                soliscloud = SoliscloudAPI('https://soliscloud.com:13333', websession)
+                inverter_detail = await soliscloud.inverter_detail(solis_credentials.key, 
+                                                                   solis_credentials.secret, 
+                                                                   inverter_sn = solis_credentials.serialnumber)
+            except (
+                SoliscloudAPI.SolisCloudError,
+                SoliscloudAPI.HttpError,
+                SoliscloudAPI.TimeoutError,
+                SoliscloudAPI.ApiError,
+            ) as error:
+                print(datetime.now(), "Error:", error)
+            else:
+                waitTime = publishData(inverter_detail)
+
+
+        now = int(time.time())
+        print(datetime.now(), "sunrise",sunrise,"now",now,"sunset", sunset)
+        if sunset < now or sunrise + 1800 > now:
+            print(datetime.now(),"It is nighttime, dont query solarpanel data")
+            if ((sunrise + 1800) < now):
+                waitTime = sunrise + 86400 + 1800 - now # we are in the evening, sunrise is actually this morning
+            else:                                       # Using this morning to estimate tomorrow sunrise.
+                waitTime = sunrise + 1800 - now         # Day has changed, midnight has passed, sunrise is exact.
+
+            print(datetime.now(), "wait is", waitTime, "seconds")
+            if waitTime < 0:
+                waitTime = 60
+
+        print(datetime.now(), "waiting", waitTime, "seconds")
+        await asyncio.sleep(waitTime)
+
+
+
 pid = os.getpid()
 client = mqtt.Client("solar inverter reader" + str(pid)) #create new instance
 client.on_connect = on_connect
-client.on_message=on_message
-client.on_publish=on_publish
+client.on_message = on_message
+client.on_publish = on_publish
 client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
 print(datetime.now(), "Start")
@@ -203,36 +161,13 @@ client.loop_start()
 
 client.subscribe(mqtt_broker.topic_prefix + "/celestials")
 
+loop = asyncio.get_event_loop()
+task = loop.create_task(fetchSolar())
 
-waitTime = 3 # wait enough to get celestials first
+try:
+    loop.run_until_complete(task)
+except asyncio.CancelledError:
+    pass
 
-while True:
-    now = int(time.time())
-    print(datetime.now(), "sunrise",sunrise,"now",now,"sunset", sunset)
-    if sunset < now or sunrise + 1800 > now:
-        print(datetime.now(),"It is nighttime, dont query solarpanel data")
-        if ((sunrise + 1800) < now):
-            waitTime = sunrise + 86400 + 1800 - now # we are in the evening, sunrise is actually this morning
-        else:                                       # Using this morning to estimate tomorrow sunrise.
-            waitTime = sunrise + 1800 - now         # Day has changed, midnight has passed, sunrise is exact.
-    try:
-        print(datetime.now(), "wait is", waitTime, "seconds")
-        if waitTime < 0:
-            waitTime = 60
-        data = msgqueue.get(block=True, timeout=waitTime)
-        if data is None:
-            continue
-        processData(data)
 
-    except Empty:
-        print(datetime.now(),"query")
-        x = queryCloud()
-        if x.status_code == 200:
-            waitTime = publishData(x.json())
-        else:
-            publishError(x.status_code, x.reason)
-            waitTime = 60
-    
-    except KeyboardInterrupt:
-        client.disconnect()
-        exit(0)
+
