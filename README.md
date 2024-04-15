@@ -22,20 +22,23 @@ This repository has only python codes, which run in linux machines. I have two r
  + saveweather: Weather forecast is in mqtt topics save way as electricity prices are.
 
 
-****- logic**** = as name says, has some kind of logics. Most clever of those controls a relay depending of
- electricity stock price.
+****- logic**** = as name says, has some kind of logics. Most clever of those is maybe setrelay. 
  + bridge: reads a subset of my mqtt topics and relays a mqtt message to a public cloud. This is to monitor
    what's happening at home, when I am somewhere far away.
  + button: Very simple gpio reader for raspberry pi. When button is pressed, a mqtt message is sent. When button
    is released, send a new message.
- + button2relay
+ + button2relay: glue the button with one relay. This is done by reading buttontopic and relaytopic and sending to relay topic.
+   If relay is on, show it with a led on raspberry pi. Note that the led is not dependent of button state, instead the relay state.
+   This means that if relay state is changed with some other way than button press, the led is still in sync.
  + heatpump
  + phaserestrictor
- + setcurrentprice
- + setcurrentvalues
- + setcurrentweather
- + setrelay
- + setupstorage
+ + setcurrentprice: tiny cron prog, which updates current price topic, data is taken from other price topics.
+ + setcurrentvalues: shell script around setcurrent* pythons. This should be called just after the hour has been changed.
+ + setcurrentweather: tiny cron prog, which updates current weather topic, data is taken from other weather topics.
+ + setrelay: quite comples program, controlling my heating boiler according to stock electricity price and solar produced energy.
+ + setupstorage:  Very simple program, saving my heating system setup to a file, when the topic is updated. In startup, the setup
+   is read from disk and is sent to the topic. This program is not needed, if your mqtt gateway stores each topic to disk, so the
+   topics are read from disk at bootup. I need only this topic, so i configure mosquitto not to save topics and so I need this prog.
  + shelly1
  + shelly4
  + shellyem
