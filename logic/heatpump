@@ -22,7 +22,7 @@ auxonly = False
 auxchanged = 0
 hitemphours = []
 lotemphours = []
-useboosthourstemp = -4
+useboosthourstemp = 1
 taxedprice = 0.0
 lastemsdata = time.time()
 

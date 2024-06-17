@@ -1,0 +1,111 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import influxdb_client
+import json
+from time import sleep
+import sys
+import RPi.GPIO as GPIO
+from queue import Queue
+from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client.domain.write_precision import WritePrecision
+
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+
+def saveData(recData):
+    storage = "testing"
+
+    if recData['id'] == "temperature":
+        client = influxdb_client.InfluxDBClient(
+            url=influx_credentials.url,
+            token=influx_credentials.token,
+            org=influx_credentials.org
+        )
+
+        ts = int(recData['ts'])
+        temperature = float(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), temperature)
+
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        p = influxdb_client.Point("thermostat").tag("name","temperature").field(recData['sensor'], temperature).time(1000 * ts,write_precision=WritePrecision.MS)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+    if recData['id'] == "thermostat":
+        client = influxdb_client.InfluxDBClient(
+            url=influx_credentials.url,
+            token=influx_credentials.token,
+            org=influx_credentials.org
+        )
+
+        ts = int(recData['ts'])
+        level = int(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), level)
+
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        p = influxdb_client.Point("thermostat").tag("name","heater").field("level", level).time(1000 * ts,write_precision=WritePrecision.MS)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe(mqtt_broker.topic_prefix + "/thermostat/+/parameters/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            sleep(30)
+
+    else:
+        sleep(30)
+ 
+
+led = 13
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(led, GPIO.OUT)
+
+msgqueue = Queue(maxsize=25)
+pid = os.getpid()
+
+client = mqtt.Client("influx_thermostat_saver:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        GPIO.output(led, GPIO.LOW)
+        saveData(json.loads(data))
+        sys.stdout.flush()
+        GPIO.output(led, GPIO.HIGH)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        GPIO.output(led, GPIO.HIGH)
+        exit(0)
+
+    except:
+        raise

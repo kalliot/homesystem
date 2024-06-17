@@ -13,7 +13,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 
@@ -33,10 +33,13 @@ def saveDaily(ts, liters):
     p = influxdb_client.Point("liters").tag("name","heatoil").field("consumed", liters).time(ts, write_precision=WritePrecision.S)
     write_api.write(bucket="daily", org=influx_credentials.org, record=p)
 
+    energy = 9.2 * liters  # efficiency is 92 procent and 1L has 10kw energy
+    p = influxdb_client.Point("energy").tag("name","burner").field("kw", energy).time(ts, write_precision=WritePrecision.S)
+    write_api.write(bucket="daily", org=influx_credentials.org, record=p)
+
 
 # daysToSearch
 # find out the timestamp of last stored data to daily bucket.
-# TODO: what if daily bucket is empty at the start?
 
 def daysToSearch(qapi):
     query = 'from(bucket:"daily")\
@@ -44,6 +47,7 @@ def daysToSearch(qapi):
     |> last()\
     |> filter(fn:(r) => r._measurement == "liters")'
 
+    secondDiff = -1
     result = qapi.query(org=influx_credentials.org, query=query)
     for table in result:
         for record in table.records:
@@ -51,7 +55,11 @@ def daysToSearch(qapi):
             epoch = int(time.mktime(time.strptime(lastdate, "%Y%m%d")))
             now = int(time.time())
             secondDiff = now - epoch
-    return int(secondDiff / 86400)
+    if secondDiff != -1:
+        ret = int(secondDiff / 86400)
+    else:
+        ret = 365
+    return ret
 
 
 def fromHour2Day(qapi, daycnt):

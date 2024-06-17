@@ -3,7 +3,7 @@
 from datetime import datetime
 import json
 import sys
-from time import sleep
+import time
 import os
 import RPi.GPIO as GPIO
 import paho.mqtt.client as mqtt 
@@ -30,6 +30,11 @@ def saveData(myData):
     write_api = client.write_api(write_options=SYNCHRONOUS)
 
     ts = int(myData['ts']) 
+    now = int(time.time())
+    if now - ts > 86400 * 2:
+        print(datetime.now(),"too old data, dont save it.")
+        return
+
     string1 = myData['string1']
     string2 = myData['string2']
     device  = myData['dev']
@@ -82,10 +87,10 @@ def on_disconnect(client, userdata, rc):
             client.reconnect()
         except:
             print(datetime.now(),"reconnect failed, waiting...")
-            sleep(30)
+            time.sleep(30)
 
     else:
-        sleep(30)
+        time.sleep(30)
 
 
 

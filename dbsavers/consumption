@@ -20,7 +20,7 @@ from setup import *
 # 2271.24707 / 3600 = 0.63090196 = Milliliters per second.
 mLitersPerSec = 0.63090196
 
-boilerSensors = "esp5bcae4"
+boilerSensors = "5bcae4"
 burnerGpio = "33"
 
 boilerTemp =    "28b867746008f"
@@ -88,14 +88,25 @@ def saveState(write_api, data, ts):
             print(datetime.now(), "state:", state, "delay:",ts - datats)
 
 
+def saveDuration(write_api, seconds, ts, heatersize, name):
+    kw = round(heatersize * seconds / 3600 , 4)
+    p = influxdb_client.Point("electricity").tag("name", name).field("kwh", kw).time(ts,write_precision=WritePrecision.S)
+    write_api.write(bucket="forever", org=influx_credentials.org, record=p)
+
+
 def saveRelay(write_api, data):
     contact = int(data['contact'])
+
     tagname = "unknown"
     power = 0
 
     if contact == 0:
         tagname = "elheater2kw"
         power = 2
+        datats = int(data['ts'])
+        if bool(data['state']) == False:
+            duration = int(data['duration'])
+            saveDuration(write_api, duration, datats, power, "solheat")
 
     elif contact == 1:
         tagname = "test"
@@ -103,6 +114,10 @@ def saveRelay(write_api, data):
     elif contact == 2:
         tagname = "elheater4kw"
         power = 4
+        datats = int(data['ts'])
+        if bool(data['state']) == False:
+            duration = int(data['duration'])
+            saveDuration(write_api, duration, datats, power, "stockheat")
 
     elif contact == 3:
         tagname = "burner_allowed"
@@ -173,7 +188,7 @@ def logger(client, userdata, level, buff):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        topics = [(mqtt_broker.topic_prefix + "/" + boilerSensors + "/parameters/#",0),
+        topics = [(mqtt_broker.topic_prefix + "/sensors/" + boilerSensors + "/parameters/#",0),
                   (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0)]
         client.subscribe(topics)
         connected = True

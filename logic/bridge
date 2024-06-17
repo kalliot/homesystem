@@ -169,7 +169,7 @@ def on_connect(client, userdata, flags, rc):
             ("ems-esp/boiler_data",                           0),
             ("ems-esp/thermostat_data",                       0),
             ("zigbee2mqtt/#",                                 0),
-            (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/#",0),
+            (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0),
             (mqtt_broker.topic_prefix + "/phase/all/elproduction",0)
         ]
         client.subscribe(topics)

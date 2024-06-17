@@ -104,7 +104,7 @@ def publishSum():
     if power == 0:
         power = prevpower
 
-    W15min += power / 240
+    W15min += power / 60
     all_power_avg.append(power)
 
     if len(all_power_avg) > 8: # collect samples from 8 quarts = 2 minutes

@@ -13,7 +13,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 
-sys.path.insert(1, '/home/pi/config')
+sys.path.insert(1, '../config')
 from setup import *
 
 
@@ -96,10 +96,12 @@ query_api = client.query_api()
 # Take one more day, because its previous value may be incomplete
 # (script was run before the day ended)
 
+print("Stock:")
 stocklines = 0
 days = daysToSearch(query_api,"stockheat") + 1
 stocklines = fromHour2Day(query_api, days, "stockheat")
 
+print("Sol:")
 sollines = 0
 days = daysToSearch(query_api,"solheat") + 1
 sollines = fromHour2Day(query_api, days, "solheat")

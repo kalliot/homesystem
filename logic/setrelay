@@ -21,7 +21,7 @@ quart = 0
 avgconsumption = currentconsumption
 shellynumber = 1
 relayonminimum = 120                           # put is on minimum seconds
-burner_max_preheat = 600
+burner_max_preheat = 900
 elhysteresis = 200
 flameburning = False
 magnetvalve = "33"
@@ -140,7 +140,8 @@ def elheaterOnByProduction(elHeater):
     # avoid division by zero
     if remain == 0:
         remain = 1
-    result = (timeleft * remain / 3600) - W15min
+
+    result = (timeleft * remain / 3600) - W15min / 4
 
     if timeleft > relayonminimum and \
         result < 5 and \
@@ -310,13 +311,13 @@ def processData(eldata):
                     elheater2kw.setState(False)
 
             if hsetup.eltype == 'stock':
-                nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
                 if (hsetup.heatoilprice * 10.8) > (sellprice - hsetup.elselcommission): # Sellprice should be compared to heating with oil
                     elheaterOnByProduction(elheater2kw)
                 else:
                     elheater2kw.setState(False)
 
                 # next, heating with low electricity stock price
+                nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
                 if elheater2kw.state == False and (hsetup.heatoilprice * 10.8) > nettoprice:
                     elheaterOn(elheater4kw, hsetup.maxconsumption)
                 else:
@@ -365,8 +366,8 @@ def on_connect(client, userdata, flags, rc):
                 (mqtt_broker.topic_prefix + "/elprice/current",0),
                 (mqtt_broker.topic_prefix + "/elprice/boosthours",0),
                 (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
-                (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/state/" + magnetvalve,0),
-                (mqtt_broker.topic_prefix + "/esp" + boilertempreader + "/parameters/temperature/#",0)
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve,0),
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
         ]
         client.subscribe(topics)
 
