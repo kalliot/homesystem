@@ -1,6 +1,6 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
-    <title>Setup</title>
+    <title>Refrigerator setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="mqttws31.js" type="text/javascript"></script>
     <script src="jquery.min.js" type="text/javascript"></script>
@@ -50,7 +50,7 @@
               ',"pwmlen":' + $('#pwmlen').val()+ '}';
 
         console.log(content);
-        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        mqtt.send("home/kallio/refrigerator/" + myDevice + "/setsetup", content, 0 , false);
         return false;
     }
 
@@ -67,7 +67,7 @@
 
         console.log(content);
         $('#sensors tbody').empty();
-        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        mqtt.send("home/kallio/refrigerator/" + myDevice + "/setsetup", content, 0 , false);
         return false;
     }
 
@@ -75,9 +75,10 @@
 
     function onConnect() {
         // Connection succeeded; subscribe to our topic
-        console.log("connected");
-        mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/setup/#", {qos: 0});
-        mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/parameters/#", {qos: 0});
+        console.log("connected, myDevice is ", myDevice);
+        mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/setup/#", {qos: 0});
+        mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/sensorfriendlyname/#", {qos: 0});
+        mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/parameters/#", {qos: 0});
     }
 
 
@@ -87,52 +88,55 @@
     };
 
 
-
     function onMessageArrived(message) {
 
         var topic = message.destinationName;
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
-        if (obj.id == "heatsetup")
+        if (obj.id == "setup")
         {
-            $('#target').val(obj.target); 
-            $('#hiboost').val(obj.hiboost); 
-            $('#lodeduct').val(obj.lodeduct);    
-            $('#pwmlen').val(obj.pwmlen);    
+            $('#temperature').val(obj.temperature); 
+            $('#hysteresis').val(obj.hysteresis); 
+            $('#mintimeon').val(obj.mintimeon);    
+            $('#lopriceboost').val(obj.lopriceboost);    
+            $('#hipricereduce').val(obj.hipricereduce);    
             $('#sensors tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
         }
         if (obj.id == "sensorfriendlyname")
         {
-            console.log("got tempsensor" + obj.sensor);
+            console.log("got tempsensor " + obj.sensor);
             $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
                                  '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
                                  '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
         }
-        if (obj.id == "thermostat")
+        if (obj.id == "cooler")
         {   
-            $('#level').html(obj.value);
-            console.log("got heater level",obj.value);
+            $('#state').html(obj.value);
+            console.log("got compressor state",obj.value);
         }
-        if (obj.id == "temperature")
+        if (obj.id == "sensorsetup")
         {   
-            if (obj.sensor == "ntc")
-            {
-                $('#temperature').html(obj.value);
-                console.log("got temperature",obj.value);
-            }    
-            else
-            {
-                $('#v'+ obj.sensor).html(obj.value);
-            }
+            console.log("got sensorsetup");
+            pass;
         }
         if (obj.id == "targettemp")
         {   
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
-
+        if (obj.id == "temperature")
+        {
+            console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
+            $('#v'+ obj.sensor).html(obj.value);
+            if (obj.sensor == "574e13c97")
+            {
+                $('#currtemp').html(obj.value);
+                console.log("this is actual", obj.value);
+            }
+        }
     };
+
 
 
     $(document).ready(function() {
@@ -144,33 +148,38 @@
     </script>
   </head>
   <body style="background-color:rgb(35, 39, 39); color:white;">
-    <h1>Thermostat setup</h1>
+    <h1>Refrigerator setup</h1>
     <div>
         <table><tr><td>
         <form> 
-            <input type="hidden" id="id" value="heatsetup"><br>
+            <input type="hidden" id="id" value="setup"><br>
             <table>
-            <tr><td><label for="target">Target temperature </label></td>
+            <tr><td><label for="temperature">Temperature</label></td>
                 <td><input type="text" 
-                            id="target" 
+                            id="temperature" 
                             size=5/>
                 </td>
 
-            <tr><td><label for="hiboost">Boost when price is low </label></td>
+            <tr><td><label for="hysteresis">Hysteresis</label></td>
                 <td><input type="text" 
-                            id="hiboost" 
+                            id="hysteresis" 
                             size=5/>
             </td>
 
-            <tr><td><label for="lodeduct">Decrease when price is high</label></td>
+            <tr><td><label for="mintimeon">Minimum compressor runtime sec.</label></td>
                 <td><input type="text" 
-                            id="lodeduct" 
+                            id="mintimeon" 
                             size=5/>
             </td>
 
-            <tr><td><label for="pwmlen">PWM one full cycle in seconds</label></td>
+            <tr><td><label for="lopriceboost">Low price boost (run cooler)</label></td>
                 <td><input type="text" 
-                            id="pwmlen" 
+                            id="lopriceboost" 
+                            size=5/>
+            </td>
+            <tr><td><label for="hipricereduce">High price reduction (run warmer)</label></td>
+                <td><input type="text" 
+                            id="hipricereduce" 
                             size=5/>
             </td>
             </tr>    
@@ -188,9 +197,9 @@
 
         <td>
             <table>
-                <tr><td>Floor current target</td><td id="currtarget"></td></tr>
-                <tr><td>Thermostat current level </td><td id="level"></td></tr>
-                <tr><td>Floor temperature</td><td id="temperature"></td></tr>
+                <tr><td>Current target</td><td id="currtarget"></td></tr>
+                <tr><td>Compressor on</td><td id="state"></td></tr>
+                <tr><td>Actual temperature</td><td id="currtemp"></td></tr>
             </table>
         </td>
         </tr></table>

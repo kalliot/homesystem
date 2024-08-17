@@ -1,0 +1,129 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Devices</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    
+    <script src="config.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="setup.css" type="text/css">
+    <script type="text/javascript">
+    var mqtt;
+    var reconnectTimeout = 10000;
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+
+    function showDetails(devid)
+    {
+        devtype = $('#T' + devid).val();
+        console.log('formid = ' + devid + ' type = ' + devtype);
+        window.open('file:///home/teppo/data_influx/homesystem/setup/' + devtype + '.html?dev=' + devid);
+        return false;
+    }
+
+
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("connected");
+        mqtt.subscribe("home/kallio/devices/#", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+        if (obj.id == "device")
+        {
+            console.log("got a device " + obj.dev);
+            btnStyle = '';
+            if (obj.connected == 0)
+            {
+                btnColor = 'gray';
+            }    
+            else
+            {
+                btnColor = 'black';
+            }
+            len = $("#T" + obj.dev).length; 
+            console.log("length is ", len);
+            if (len == 0) 
+            {
+                console.log('style="color:' + btnColor + ';"');
+                $('#devices').append('<tr">><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
+                                    '"/></td><td><input type="text" id="T' + obj.dev + '" size=10 value="' + obj.type + 
+                                    '"/></td><td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button></form></td></tr>');
+            }
+            else
+            {
+                $("#B" + obj.dev).css('color',btnColor);
+            }
+        }
+    };
+
+
+    $(document).ready(function() {
+        MQTTconnect();
+    });
+
+    </script>
+  </head>
+  <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1>Thermostat setup</h1>
+    <div>
+        <table><tr><td>
+        <form> 
+            <table id="devices">
+            <tr><thead><th>Device</th><th>Type</th></thead></tr>
+            </table>
+        </form>
+        </td>
+        </tr></table>
+    </div>
+  </body>
+</html>
+
+
+	
+
+   
+
+	
