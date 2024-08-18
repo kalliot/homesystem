@@ -89,7 +89,7 @@
             {
                 console.log('style="color:' + btnColor + ';"');
                 $('#devices').append('<tr">><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
-                                    '"/></td><td><input type="text" id="T' + obj.dev + '" size=10 value="' + obj.type + 
+                                    '"/></td><td><input type="text" readonly id="T' + obj.dev + '" size=10 value="' + obj.type + 
                                     '"/></td><td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button></form></td></tr>');
             }
             else

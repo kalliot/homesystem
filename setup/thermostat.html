@@ -1,6 +1,6 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
-    <title>Setup</title>
+    <title>Thermostat setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="mqttws31.js" type="text/javascript"></script>
     <script src="jquery.min.js" type="text/javascript"></script>
@@ -54,6 +54,20 @@
         return false;
     }
 
+    function sendPidSetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "pidsetup"' +
+              ',"pidkp":' + $('#pidkp').val() +
+              ',"pidki":' + $('#pidki').val() +
+              ',"pidkd":' + $('#pidkd').val() + '}';
+
+        console.log(content);
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+
+
     function setfriendlyname(formid)
     {
         console.log('formid = ' + formid);
@@ -94,6 +108,13 @@
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
+        if (obj.id == "pidsetup")
+        {
+            console.log("got pid");
+            $('#pidkp').val(obj.pidkp);
+            $('#pidki').val(obj.pidki);
+            $('#pidkd').val(obj.pidkd);
+        }
         if (obj.id == "heatsetup")
         {
             $('#target').val(obj.target); 
@@ -187,6 +208,27 @@
         </td>
 
         <td>
+            <form>
+                <input type="hidden" id="id" value="pidsetup"><br>
+                <table>
+                <tr><td><label for="pidkp">P</label></td>
+                    <td><input type="text"
+                                id="pidkp"
+                                size=5/>
+                    </td></tr>
+                    <tr><td><label for="pidki">I</label></td>
+                        <td><input type="text"
+                                    id="pidki"
+                                    size=5/>
+                        </td></tr>
+                    <tr><td><label for="pidkd">D</label></td>
+                        <td><input type="text"
+                                    id="pidkd"
+                                    size=5/>
+                        </td></tr>
+                <tr><td><button type="button" onClick="sendPidSetup()">Update</button></td></tr>
+                </table>
+            </form>
             <table>
                 <tr><td>Floor current target</td><td id="currtarget"></td></tr>
                 <tr><td>Thermostat current level </td><td id="level"></td></tr>
