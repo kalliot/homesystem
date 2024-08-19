@@ -13,6 +13,9 @@
     var myDevice = "none";
 
 
+    // still missing: NTC calibration
+    //                Display brightness
+
     function MQTTconnect() {
         mqtt = new Paho.MQTT.Client(
                         host,
@@ -67,6 +70,14 @@
     }
 
 
+    function sendBrightnessSetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "brightness", "value":' +  $('#brightness').val() + '}';
+        console.log(content);
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
 
     function setfriendlyname(formid)
     {
@@ -100,7 +111,15 @@
         setTimeout(MQTTconnect, reconnectTimeout);
     };
 
-
+    function connectSlider(src, dst, immediateAction)
+    {
+        console.log(src, "changed to", $(src).val());
+        $(dst).val($(src).val());
+        if (immediateAction != undefined)
+        {
+            immediateAction();
+        }
+    }
 
     function onMessageArrived(message) {
 
@@ -152,7 +171,12 @@
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
-
+        if (obj.id == "brightness")
+        {
+            $('#brightness').val(obj.value);
+            connectSlider('#brightness','#brightnessRange');
+            console.log("got brightness",obj.value);
+        }
     };
 
 
@@ -192,25 +216,29 @@
             <tr><td><label for="pwmlen">PWM one full cycle in seconds</label></td>
                 <td><input type="text" 
                             id="pwmlen" 
-                            size=5/>
+                            size=5/>0
             </td>
             </tr>    
                         
             <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
             </table>
         </form>
+
         <form> 
             <input type="hidden" id="id" value="sensorfriendlyname"><br>
             <table id="sensors">
-            <tr><thead><th>sensor</th><th>name</th><th>value</th></thead></tr>
+            <tr><thead><th colspan="4" text-align:center;>Temperature sensors</th></tr>
+            <tr><th>sensor</th><th>name</th><th>value</th></thead></tr>
             </table>
         </form>
         </td>
 
-        <td>
+
+        <td valign = top>
             <form>
                 <input type="hidden" id="id" value="pidsetup"><br>
                 <table>
+                <tr><th colspan="2" text-align:center;>Pid setup</th></tr>
                 <tr><td><label for="pidkp">P</label></td>
                     <td><input type="text"
                                 id="pidkp"
@@ -229,6 +257,26 @@
                 <tr><td><button type="button" onClick="sendPidSetup()">Update</button></td></tr>
                 </table>
             </form>
+
+            <form>
+                <table>
+                <tr><td><label for="brightness">Brightness</label></td>
+                    <td><input type="text"
+                                id="brightness"
+                                size=5
+                                onchange="connectSlider('#brightness','#brightnessRange',sendBrightnessSetup)"/>
+                    </td>
+                    <td><input type="range"
+                        min="0"
+                        max="16"
+                        step="1"
+                        id="brightnessRange"
+                        oninput="connectSlider('#brightnessRange','#brightness', sendBrightnessSetup)">
+                    </td>
+                </tr>
+                </table>
+            </form>
+
             <table>
                 <tr><td>Floor current target</td><td id="currtarget"></td></tr>
                 <tr><td>Thermostat current level </td><td id="level"></td></tr>

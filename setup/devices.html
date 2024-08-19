@@ -45,7 +45,7 @@
     {
         devtype = $('#T' + devid).val();
         console.log('formid = ' + devid + ' type = ' + devtype);
-        window.open('file:///home/teppo/data_influx/homesystem/setup/' + devtype + '.html?dev=' + devid);
+        window.open(devtype + '.html?dev=' + devid);
         return false;
     }
 
@@ -71,6 +71,23 @@
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
+        if (obj.id == "info")
+        {
+            console.log("got info from device ",obj.dev)
+            return true;
+        }
+        if (obj.id == "statistics")
+        {
+            console.log("got statistics from device ",obj.dev)
+            uptime = obj.ts - obj.started;
+            if (uptime)
+            {
+                uptime = Math.round(uptime / 3600);
+            }
+            $("#info" + obj.dev).html("uptime " + uptime + " hours");
+            return true;
+        }
+
         if (obj.id == "device")
         {
             console.log("got a device " + obj.dev);
@@ -82,15 +99,17 @@
             else
             {
                 btnColor = 'black';
+                mqtt.subscribe("home/kallio/" + obj.type + "/" + obj.dev + "/statistics", {qos: 0});
             }
             len = $("#T" + obj.dev).length; 
             console.log("length is ", len);
             if (len == 0) 
             {
                 console.log('style="color:' + btnColor + ';"');
-                $('#devices').append('<tr">><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
+                $('#devices').append('<tr><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
                                     '"/></td><td><input type="text" readonly id="T' + obj.dev + '" size=10 value="' + obj.type + 
                                     '"/></td><td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button></form></td></tr>');
+                $('#devices').append('<tr><td></td><td colspan="2" id="info' + obj.dev + '">No info available</td></tr>');
             }
             else
             {
