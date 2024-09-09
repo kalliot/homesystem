@@ -1,0 +1,149 @@
+#!/usr/bin/env python
+
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import json
+import sys
+from queue import Queue, Empty
+
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+
+def publishError(category, code, description):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "error",
+        "dev"     :      "zbinputs",
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/zbinputs"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+def relayState(state):
+    global mqtt_broker
+
+    now = int(time.time())
+    relaymsg = {
+        'id': 'relay',
+        'ts': now,
+        'contact': 0,
+        'state': state
+    }
+    setrelaytopic = mqtt_broker.topic_prefix + "/relay/shellyplus1pm/setstate"
+    client.publish(setrelaytopic,json.dumps(relaymsg), qos=0) # important: dont use retain flag.
+
+
+def handleButton(data):
+    action = data['action']
+
+    if action == "single":
+        print(datetime.now(), "Relay on")
+        relayState(True)
+
+    if action == "double":        
+        print(datetime.now(), "Relay off")
+        relayState(False)
+
+
+def handleCube(data):
+
+    action = 'none'
+    if not (jsonData.get('action') is None):
+        action = data['action']
+
+    if action == "rotate_right":
+        side = int(data['side'])
+        if side == 0:
+            print(datetime.now(), "Relay on")
+            relayState(True)
+
+    if action == "rotate_left":
+        side = int(data['side'])
+        if side == 0:
+            print(datetime.now(), "Relay off")
+            relayState(False)
+
+
+def handleTopics(recData):
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    if (item == "button1"):
+        data = json.loads(recData.payload)
+        handleButton(data)
+
+    if (item == "button2"):
+        data = json.loads(recData.payload)
+
+    elif item == "Cube":
+        data = json.loads(recData.payload)
+        handleCube(data)
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("zigbee2mqtt/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+msgqueue = Queue(maxsize=10)    
+pid = os.getpid()
+
+
+client = mqtt.Client("zbinputs:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except Empty:
+        pass
+
+    except:
+        raise
