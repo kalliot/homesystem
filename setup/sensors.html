@@ -1,0 +1,214 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Sensors setup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    
+    <script src="config.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="setup.css" type="text/css">
+    <script type="text/javascript">
+    var mqtt;
+    var reconnectTimeout = 10000;
+    var myDevice = "none";
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+    function sendsetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "setup"' + 
+              ',"interval":' + $('#interval').val() + '}';
+
+        console.log(content);
+        mqtt.send("home/kallio/sensors/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+    function setfriendlyname(formid)
+    {
+        console.log('formid = ' + formid);
+
+        sensor = $('#s' + formid).val();
+        name = $('#n' + formid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "sensorfriendlyname"' + 
+              ',"sensor":"' + sensor + 
+              '","name":"' + name + '"}';
+
+        console.log(content);
+        //$('#sensors tbody').empty();
+        mqtt.send("home/kallio/sensors/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("connected, myDevice is ", myDevice);
+        mqtt.subscribe("home/kallio/sensors/" + myDevice + "/setup/#", {qos: 0});
+        mqtt.subscribe("home/kallio/sensors/" + myDevice + "/sensorfriendlyname/#", {qos: 0});
+        mqtt.subscribe("home/kallio/sensors/" + myDevice + "/parameters/#", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+        if (obj.dev != myDevice) return;
+        if (obj.id == "setup")
+        {
+            console.log("got setup");
+            $('#interval').val(obj.interval); 
+        }
+        if (obj.id == "sensorfriendlyname")
+        {
+            len = $("#F" + obj.sensor).length; 
+            console.log("length is ", len);
+
+            console.log("got tempsensor " + obj.sensor);
+            if (len == 0)
+            {
+                $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
+                                        '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
+                                        '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
+            }                     
+            else
+            {
+                $("#n" + obj.sensor).val(obj.name);
+            }
+        }
+        if (obj.id == "interval")
+        {   
+            console.log("got interval");
+            $('#interval').val(obj.value);
+        }
+        if (obj.id == "temperature")
+        {
+            console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
+            $('#v'+ obj.sensor).html(obj.value);
+        }
+        if (obj.id == "counter")
+        {
+            console.log("got counter, num=", obj.sensor, " value=", obj.value, "avg1min=", obj.avg1min);
+            len = $("#gpio" + obj.sensor).length; 
+            if (len == 0)
+            {
+                $('#counters').append('<tr><td id="gpio' + obj.sensor + '">' + obj.sensor + 
+                    '</td><td id="v' + obj.sensor + '">' + obj.value + 
+                    '</td><td id="avg'+ obj.sensor +'">' + obj.avg1min + '</td></tr>');
+            }    
+            else
+            {
+                $('#v'+ obj.sensor).html(obj.value);
+                $('#avg'+ obj.sensor).html(obj.avg1min);
+            }
+        }
+        if (obj.id == "state")
+        {
+            console.log("got state, num=", obj.sensor, " value=", obj.value, "duration=", obj.duration);
+            len = $("#gpio" + obj.sensor).length; 
+            if (len == 0)
+            {
+                $('#states').append('<tr><td id="gpio' + obj.sensor + '">' + obj.sensor + 
+                    '</td><td id="v' + obj.sensor + '">' + obj.value + 
+                    '</td><td id="dur'+ obj.sensor +'">' + obj.duration + '</td></tr>');
+            }    
+            else
+            {
+                $('#v'+ obj.sensor).html(obj.value);
+                $('#dur'+ obj.sensor).html(obj.duration);
+            }
+            $("#v" + obj.sensor).css("background", obj.value ? "red" : "blue");
+        }
+
+    };
+
+
+
+    $(document).ready(function() {
+        myDevice = (new URL(location.href)).searchParams.get('dev');
+        console.log(myDevice);
+        MQTTconnect();
+    });
+
+    </script>
+  </head>
+  <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1>Sensors setup</h1>
+    <div>
+        <table><tr><td>
+        <form> 
+            <input type="hidden" id="id" value="setup"><br>
+            <table>
+            <tr><td><label for="interval">Counter interval</label></td>
+                <td><input type="text" 
+                            id="interval" 
+                            size=5/>
+                </td>
+                        
+            <td><button type="button" onClick="sendsetup()">Update</button></td>
+            </table>
+        </form>
+        <table id="counters">
+            <tr><thead><th>gpio</th><th>count</th><th>avg1min</th></thead></tr>
+        </table>
+        <table id="states">
+            <tr><thead><th>gpio</th><th>state</th></thead></tr>
+        </table>
+
+        <form> 
+            <input type="hidden" id="id" value="sensorfriendlyname"><br>
+            <table id="sensors">
+            <tr><thead><th>sensor</th><th>name</th><th>value</th></thead></tr>
+            </table>
+        </form>
+        </td>
+        
+        </tr></table>
+    </div>
+  </body>
+</html>
+
+
+	
+
+   
+
+	
