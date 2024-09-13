@@ -14,7 +14,7 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 desiredroomtemp = 21.5
-desiredfloortemp = 21.5
+desiredfloortemp = 23.0
 heatpump_min_temp = -17
 heatpump_restore_temp = -13
 outtemp = 0.0
@@ -102,9 +102,9 @@ class heatSetup:
         self.lowroom         = 19
         self.normroom        = 21.5
         self.hiroom          = 23
-        self.lowfloor        = 19
-        self.normfloor       = 21.5
-        self.hifloor         = 23
+        self.lowfloor        = 23
+        self.normfloor       = 24
+        self.hifloor         = 24.5
 
 
 hsetup = heatSetup()
@@ -245,8 +245,8 @@ def desiredTemperatures():
     global desiredroomtemp, desiredfloortemp
     global auxonly, outtemp, useboosthourstemp
 
-    if auxonly == False and outtemp > useboosthourstemp: # when it is colder, this affects only for aux mix => not needed.
-        if checkHiTemp():
+    if auxonly == False and outtemp > useboosthourstemp and outtemp < 14: # when it is colder, this affects only for aux mix => not needed.
+        if checkHiTemp():                                                 # and when it is over 14 the heating is not on.
             desiredroomtemp   = hsetup.hiroom
             desiredfloortemp  = hsetup.hifloor
             return

@@ -13,6 +13,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
 prevLevel = 0
+prevTarget = -273
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
@@ -26,18 +27,24 @@ def saveDuration(write_api, seconds, ts, heatersize, name):
 def saveData(recData):
     storage = "testing"
     global prevLevel
+    global prevTarget
+
+    client = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+
+    ts = int(recData['ts'])
+    now = int(time.time())
+
 
     if recData['id'] == "temperature":
-        client = influxdb_client.InfluxDBClient(
-            url=influx_credentials.url,
-            token=influx_credentials.token,
-            org=influx_credentials.org
-        )
-
-        ts = int(recData['ts'])
-        now = int(time.time())
+        if ts == 0:
+            ts = now
         if ((now - ts) > 7200): # dont save too old data
             return
+
         temperature = float(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), temperature)
 
@@ -45,16 +52,28 @@ def saveData(recData):
         p = influxdb_client.Point("refrigerator").tag("name","temperature").field(recData['friendlyname'], temperature).time(ts,write_precision=WritePrecision.S)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
-    if recData['id'] == "cooler":
-        client = influxdb_client.InfluxDBClient(
-            url=influx_credentials.url,
-            token=influx_credentials.token,
-            org=influx_credentials.org
-        )
+    if recData['id'] == "targettemp":
+        if ts == 0:
+            ts = now
+        elif (now - ts) > 7200: # dont save too old data
+            return
+        target = float(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), "targettemp:", datetime.fromtimestamp(ts), target)
 
-        ts = int(recData['ts'])
-        now = int(time.time())
-        if ((now - ts) > 7200):
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+
+        if (prevTarget != -273):
+            p = influxdb_client.Point("refrigerator").tag("name","targettemp").field(recData['dev'], prevTarget).time(ts -1,write_precision=WritePrecision.S)
+            write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+        p = influxdb_client.Point("refrigerator").tag("name","targettemp").field(recData['dev'], target).time(ts,write_precision=WritePrecision.S)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+        prevTarget = target
+
+    if recData['id'] == "cooler":
+        if ts == 0:
+            ts = now
+        if ((now - ts) > 7200): # dont save too old data
             return
 
         level = int(recData['value'])
