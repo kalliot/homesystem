@@ -94,6 +94,8 @@
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
+
+        if (obj.dev != myDevice) return;
         if (obj.id == "setup")
         {
             $('#temperature').val(obj.temperature); 
@@ -114,6 +116,7 @@
         {   
             $('#state').html(obj.value);
             console.log("got compressor state",obj.value);
+            $("#state").css("background", obj.value ? "red" : "blue");
         }
         if (obj.id == "sensorsetup")
         {   

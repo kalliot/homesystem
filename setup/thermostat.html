@@ -127,6 +127,8 @@
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
+
+        if (obj.dev != myDevice) return;
         if (obj.id == "pidsetup")
         {
             console.log("got pid");

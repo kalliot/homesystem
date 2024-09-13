@@ -185,8 +185,9 @@
                 break;
 
                 case 3:
-                    $('#burnerstate').html(obj.state ? "On" : "Off");
-                    $("#burnerstate").css("background", obj.state ? "red" : "blue");
+                    $('#burnerstate').html(obj.state ? "Preheat" : "Off");
+                    $("#burnerstate").css("background", obj.state ? "yellow" : "blue");
+                    $("#burnerstate").css("color", obj.state ? "black" : "white");
                 break;
                 
                 default:
@@ -204,19 +205,24 @@
         }
         if (obj.id == "temperature")
         {
-            if (obj.sensor == "28b867746008f")
+            if (obj.sensor == "746008f")
             {
                 $('#currtemp').html(obj.value);
                 setNeedle(obj.value,'#solElTempStartRange','#solelneedle')
                 setNeedle(obj.value,'#stockElTempStartRange','#stockelneedle')
             }
-            if (obj.sensor == "281672574e13c75")
+            if (obj.sensor == "574e13c75")
             {
                 $('#centertemp').html(obj.value);
                 setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
             }
         }
-
+        if (obj.id == "state" && obj.sensor == 33)
+        {
+            $('#burnerstate').html(obj.value ? "On" : "Off");
+            $("#burnerstate").css("background", obj.value ? "red" : "blue");
+            $("#burnerstate").css("color", "white");
+        }
         if (obj.id == "solarerror")
         {
             var d = new Date(obj.ts * 1000);
