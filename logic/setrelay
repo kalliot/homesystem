@@ -80,9 +80,12 @@ elheater2kw = heater(1, 0, 73.0, 2.0, 2000)
 elheater4kw = heater(1, 2, 55.0, 2.0, 4000)
 
 boilertempreader = "5bcae4"
-boilertempsensor = "28b867746008f"
-centertempsensor = "281672574e13c75"
-hotwatertempsensor = "28e1747360083"
+
+boilertempsensor = "746008f"
+centertempsensor = "574e13c75"
+hotwatertempsensor = "7360083"
+
+
 boilertemp = 0.0
 centertemp = 0.0
 
