@@ -1,0 +1,219 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>RGB 7-segment display setup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    
+    <script src="config.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="setup.css" type="text/css">
+    <script type="text/javascript">
+    var mqtt;
+    var reconnectTimeout = 10000;
+    var myDevice = "none";
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+    function sendsetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "setup"' + 
+              ',"showinternaltemp":' + $('#showinternaltemp').val() + 
+              ',"zonehigh":' + $('#zonehigh').val() + 
+              ',"zonelow":' + $('#zonelow').val() + 
+              ',"defaultcolor":"' + $('#defaultcolor').val() + '"' +
+              ',"lowcolor":"' + $('#lowcolor').val() + '"' +
+              ',"highcolor":"' + $('#highcolor').val()+ '"}';
+
+        console.log(content);
+        mqtt.send("home/kallio/rgb7segdisplay/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+    function setfriendlyname(formid)
+    {
+        console.log('formid = ' + formid);
+
+        sensor = $('#s' + formid).val();
+        name = $('#n' + formid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "sensorfriendlyname"' + 
+              ',"sensor":"' + sensor + 
+              '","name":"' + name + '"}';
+
+        console.log(content);
+        $('#sensors tbody').empty();
+        mqtt.send("home/kallio/rgb7segdisplay/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("connected, myDevice is ", myDevice);
+        mqtt.subscribe("home/kallio/devices/" + myDevice , {qos: 0});
+        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/setup/#", {qos: 0});
+        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/sensorfriendlyname/#", {qos: 0});
+        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/parameters/#", {qos: 0});
+        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/color/#", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+    
+    function timeredFunc(id, color)
+    {
+        $(id).val(color).change();
+    }
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+
+        if (obj.dev != myDevice) return;
+        if (obj.id == "device")
+        {
+            if (obj.connected == 1)
+            {
+                $('#status').html("Connection status: Connected");
+                $('#sensors tbody').empty();                    
+                $('#lowcolor').empty();
+                $('#highcolor').empty();
+                $('#defaultcolor').empty();
+                $('#colorhelp').empty();
+            }
+            else
+            {
+                $('#status').html("Connection status: Disconnected");
+            }
+        }
+        if (obj.id == "setup")
+        {
+            console.log("got setup");
+            $('#showinternaltemp').val(obj.showinternaltemp); 
+            $('#zonehigh').val(obj.zonehigh); 
+            $('#zonelow').val(obj.zonelow);
+            // option selection must be done by timeout, because
+            // maybe colors are not yet received, when we are here, receivin the setup.
+            setTimeout(() => {timeredFunc('#lowcolor',obj.lowcolor);},100);
+            setTimeout(() => {timeredFunc('#highcolor',obj.highcolor);},100);
+            setTimeout(() => {timeredFunc('#defaultcolor',obj.defaultcolor);},100);
+        }
+        if (obj.id == "sensorfriendlyname")
+        {
+            console.log("got tempsensor " + obj.sensor);
+            $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
+                                 '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
+                                 '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
+        }
+        if (obj.id == "color")
+        {   
+            console.log("got color",obj.name, obj.value);
+            $('#lowcolor').append('<option value=' + obj.name + ' style="background-color: ' + obj.value + '">' + obj.name + '</option>');
+            $('#highcolor').append('<option value=' + obj.name + '>' + obj.name + '</option>');
+            $('#defaultcolor').append('<option value=' + obj.name + '>' + obj.name + '</option>');
+            $('#colorhelp').append('<div style="background-color:' + obj.value + '">' +obj.name + '<br></div>');
+        }
+        if (obj.id == "temperature")
+        {
+            console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
+            $('#v'+ obj.sensor).html(obj.value);
+        }
+    };
+
+
+
+    $(document).ready(function() {
+        myDevice = (new URL(location.href)).searchParams.get('dev');
+        console.log(myDevice);
+        MQTTconnect();
+    });
+
+    </script>
+  </head>
+  <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1>RGB 7-segment display setup</h1>
+    <div id="status">Connection state unknown</div>
+    <div>
+        <table><tr><td id="colorhelp">Colors<br></td>
+        <td><table><tr><td>
+        <form> 
+            <input type="hidden" id="id" value="setup"><br>
+            <table>
+            <tr><td><label for="showinternaltemp">Show internal temperature</label></td>
+                <td><input type="text" 
+                            id="showinternaltemp" 
+                            size=5/>
+                </td>
+
+            <tr><td><label for="zonehigh">Zonehigh</label></td>
+                <td><input type="text" 
+                            id="zonehigh" 
+                            size=5/>
+            </td>
+
+            <tr><td><label for="zonelow">Zonelow</label></td>
+                <td><input type="text" 
+                            id="zonelow" 
+                            size=5/>
+            </td>
+
+            <!-- selection list contents are built dynamically from setup data -->
+            <tr><td><label for="lowcolor">Lowcolor</label></td>
+                    <td><select id="lowcolor"></select>        
+            <tr><td><label for="defaultcolor">Defaultcolor</label></td>
+                    <td><select id="defaultcolor"></select>        
+            <tr><td><label for="highcolor">Highcolor</label></td>
+                <td><select id="highcolor"></select>        
+            </td>
+            </tr>    
+                        
+            <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
+            </table>
+        </form>
+        <form> 
+            <input type="hidden" id="id" value="sensorfriendlyname"><br>
+            <table id="sensors">
+            <tr><thead><th>sensor</th><th>name</th><th>value</th></thead></tr>
+            </table>
+        </form>
+        </td>
+        </tr></table>
+        </td></tr></table>
+    </div>
+  </body>
+</html>	
