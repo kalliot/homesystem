@@ -60,7 +60,7 @@ def handleButton(data):
 def handleCube(data):
 
     action = 'none'
-    if not (jsonData.get('action') is None):
+    if not (data.get('action') is None):
         action = data['action']
 
     if action == "rotate_right":

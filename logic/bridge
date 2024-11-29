@@ -14,9 +14,31 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 boilertempreader = "5bcae4"
-centertempsensor = "281672574e13c75"
-esptempsensor = "288f83a130097"
+centertempsensor = "574e13c75"
+esptempsensor = "a130097"
 cloud_refresh_interval = 60
+
+class flooding:
+    def __init__(self):
+        self.items = []
+
+    def add(self, item):
+        self.items.append(item)
+
+    def remove(self, item):
+        try:
+            self.items.remove(item)
+        except:
+            pass
+
+    def getItems(self):
+        buff = "None"
+        if self.items.count != 0:
+            buff = ""
+            for fitem in self.items:
+                buff += fitem + ' '
+        return buff
+
 
 class overview:
     def __init__(self):
@@ -29,8 +51,8 @@ class overview:
         self.boilertemp     = 0
         self.electricity    = 0
         self.waterleak      = "None"
-        self.lastsend       = 0
-        
+        self.lastsend       = int(time.time()) - 57 # first send 3 sec after start.
+
 
     def send(self):
         now = int(time.time())
@@ -47,12 +69,13 @@ class overview:
                 "esp"       :    self.esptemp,
                 "boiler"    :    self.boilertemp,
                 "electricity":   self.electricity,
-                "waterleak":     self.waterleak
+                "waterleak":     floodings.getItems()
             }
             topic = mqtt_broker.topic_prefix + "/overview"
             cloud.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 compiled = overview()
+floodings = flooding()
 
 
 def getJsonNumericVar(source, name, defvalue):
@@ -72,6 +95,13 @@ def getJsonVar(source, name, defvalue):
     return ret
 
 
+def handleFloodings(data, item):
+    state = getJsonVar(data,'water_leak', False)
+    if state:
+        floodings.add(item)
+    else:
+        floodings.remove(item)
+
 
 def parseOtherTopics(topic, data):
     if topic=="varasto":
@@ -89,13 +119,16 @@ def parseOtherTopics(topic, data):
         compiled.send()
 
     elif topic == "kitchen_trash":
-        state = getJsonVar(data,'water_leak', False)
-        if state:
-            compiled.waterleak = topic
-        else:
-            compiled.waterleak = "None"
+        handleFloodings(data, topic)
+        compiled.send()
 
+    elif topic == "tiskikone":
+        handleFloodings(data, topic)
+        compiled.send()
 
+    elif topic == "lattia":
+        handleFloodings(data, topic)
+        compiled.send()
 
 def parseHomeTopics(data):
     global centertempsensor
@@ -111,7 +144,7 @@ def parseHomeTopics(data):
 
     elif id == "elproduction":
         compiled.electricity = round(getJsonNumericVar(data,'poweravg',compiled.electricity),2)
-
+        compiled.send()
 
 def handleTopics(recData):
     arr = recData.topic.split("/")
@@ -189,7 +222,7 @@ def on_disconnect(client, userdata, rc):
         time.sleep(30)
 
 
-msgqueue = Queue(maxsize=25)    
+msgqueue = Queue(maxsize=35)
 pid = os.getpid()
 
 

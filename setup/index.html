@@ -16,10 +16,10 @@
         mqtt = new Paho.MQTT.Client(
                         host,
                         port,
-                        "web_" + parseInt(Math.random() * 100,
+                        "heatersetup_" + parseInt(Math.random() * 100,
                         10));
         var options = {
-            timeout: 3,
+            timeout: 60,
             useSSL: useTLS,
             cleanSession: false,
             onSuccess: onConnect,
@@ -64,12 +64,13 @@
 
     function onConnect() {
         // Connection succeeded; subscribe to our topic
+        console.log("<---- connected ---->")
         mqtt.subscribe("home/kallio/heating/setup", {qos: 0});
         mqtt.subscribe("home/kallio/relay/+/shelly1/state");
         mqtt.subscribe("home/kallio/elprice/current");
         mqtt.subscribe("home/kallio/phase/all/elproduction");
         mqtt.subscribe("home/kallio/error/#");
-        mqtt.subscribe("home/kallio/sensors/5bcae4/parameters/temperature/#");
+        mqtt.subscribe("home/kallio/sensors/5bcae4/parameters/#");
 
         $('#topic').val(topic);
         var d = new Date();
@@ -78,6 +79,7 @@
 
 
     function onConnectionLost(response) {
+        console.log("connection lost");
         setTimeout(MQTTconnect, reconnectTimeout);
         $('#status').val("connection lost: " + response.errorMessage + ". Reconnecting");
         var d = new Date();
@@ -203,7 +205,8 @@
         {
             $('#currentpower').html(obj.poweravg + " / " + obj.power);
         }
-        if (obj.id == "temperature")
+
+        if (obj.id == "temperature" && obj.dev=="5bcae4")
         {
             if (obj.sensor == "746008f")
             {
@@ -217,7 +220,7 @@
                 setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
             }
         }
-        if (obj.id == "state" && obj.sensor == 33)
+        if (obj.id == "state" && obj.dev=="5bcae4" && obj.sensor == 33)
         {
             $('#burnerstate').html(obj.value ? "On" : "Off");
             $("#burnerstate").css("background", obj.value ? "red" : "blue");
@@ -237,6 +240,7 @@
 
 
     $(document).ready(function() {
+        console.log("document ready");
         MQTTconnect();
     });
 
@@ -400,7 +404,7 @@
                  </td></tr>
             </tr>
                         
-            <tr><td><button onClick="sendsetup()">Update</button></td></tr>
+            <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
             </table>
         </form>
         </td>
@@ -414,6 +418,7 @@
                 <tr><td>Boiler top (sol/el) temperature</td><td id="currtemp"></td><td>C</td></tr>
                 <tr><td>Boiler center (burner) temperature</td><td id="centertemp"></td><td>C</td></tr>
                 <tr><td><a href="statusdisplay.html">Status display</a><td></tr>
+                <tr><td><a href="devices.html">Devices</a><td></tr>
             </table>
         </td>
         </tr></table>
