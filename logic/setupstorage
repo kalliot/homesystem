@@ -5,7 +5,7 @@ import os
 import json
 import time
 from datetime import datetime
-from queue import Queue
+from queue import Queue, Empty
 import sys
 import paho.mqtt.client as mqtt 
 
@@ -17,10 +17,12 @@ from setup import *
 
 lastRead = 0
 
-def processData(data):
+def processData(msg):
     global lastRead
 
-    if data['id'] == "heatsetup":
+    data = json.loads(msg.payload)
+    id = data['id']
+    if id == "heatsetup":
         now = int(time.time())
         if now - lastRead < 2:
             print(datetime.utcnow(),"don't write, setup was just refreshed from disk")    
@@ -29,7 +31,56 @@ def processData(data):
         f = open(rundir + setupfile,"w")
         f.write(json.dumps(data))
         f.close()
-        
+
+    elif id == "device":
+        connected = int(data['connected'])
+        if connected == 0:
+            print(datetime.utcnow(),"found disconnected device", data['dev'])
+            cleanqueue.put(msg)
+        elif not cleanqueue.empty():
+            print(datetime.utcnow(), data['dev'], "come alive, clearing the cleanqueue")
+            cleanqueue.queue.clear()
+
+    elif id == "tempsensors":
+        print(datetime.utcnow(),"storing tempsensors of device", data['dev'])
+
+
+def clean_topics(msg):
+    data = json.loads(msg.payload)
+    print(datetime.utcnow(),"Cleaning", data['type'],"device", data['dev'])
+    client.publish(msg.topic, None, qos=0, retain=True)
+    devtype = data['type'];
+    basetopic = mqtt_broker.topic_prefix + '/' + devtype + '/' + data['dev']
+
+    client.publish(basetopic + '/setup', None, qos=0, retain=True)
+    client.publish(basetopic + '/info', None, qos=0, retain=True)
+    client.publish(basetopic + '/statistics', None, qos=0, retain=True)
+    client.publish(basetopic + '/tempsensors', None, qos=0, retain=True)
+
+    if devtype == 'rgb7segdisplay':
+        client.publish(basetopic + '/colors', None, qos=0, retain=True)
+        client.publish(basetopic + '/sensorsetup', None, qos=0, retain=True)
+
+    elif devtype == 'thermostat':
+        client.publish(basetopic + '/setup/pid', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/ntc', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/brightness', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/heat', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/calibratehigh', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/calibratelow', None, qos=0, retain=True)
+
+    elif devtype == 'refrigerator':
+        client.publish(basetopic + '/sensorsetup', None, qos=0, retain=True)
+
+def clean_inactive_devices():
+    while (True):
+        try:
+            msg = cleanqueue.get(block=False)
+            clean_topics(msg)
+
+        except Empty:
+            print(datetime.utcnow(),"Nothing to clean")
+            return
 
 
 def sendSetup():
@@ -50,7 +101,8 @@ def sendSetup():
 
 
 def on_message(client, userdata, message):
-    msgqueue.put(message.payload)
+    if (len(message.payload)):
+        msgqueue.put(message)
 
 
 def on_connect(client, userdata, flags, rc):
@@ -76,7 +128,7 @@ def on_disconnect(client, userdata, rc):
 
 
 msgqueue = Queue(maxsize=3)
-
+cleanqueue = Queue(maxsize=5)
 
 client = mqtt.Client("setupstorage" + str(os.getpid()))
 client.on_connect = on_connect
@@ -89,17 +141,22 @@ client.loop_start()
 
 sendSetup()
 
-topics = [(mqtt_broker.topic_prefix + "/heating/setup",0)]
+topics = [(mqtt_broker.topic_prefix + "/heating/setup",0),
+          (mqtt_broker.topic_prefix + "/devices/#",0),
+          (mqtt_broker.topic_prefix + "/+/+/tempsensors",0)]
 client.subscribe(topics)
 
 
 while True:
     try:
-        data = msgqueue.get(block=True)
+        if cleanqueue.empty():
+            waittime = None
+        else:
+            waittime = 10
+        data = msgqueue.get(block=True, timeout=waittime)
         if data is None:
             continue
-        msg = json.loads(data)
-        processData(msg)
+        processData(data)
 
     except KeyboardInterrupt:
         client.disconnect()
@@ -108,6 +165,10 @@ while True:
     except json.decoder.JSONDecodeError as e:
         print(datetime.utcnow(), "json:", e)
         print(datetime.utcnow(), data)
+
+    except Empty:
+        print(datetime.utcnow(),"Timeout")
+        clean_inactive_devices()
 
     except:
         raise        
