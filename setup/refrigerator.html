@@ -77,7 +77,7 @@
         // Connection succeeded; subscribe to our topic
         console.log("connected, myDevice is ", myDevice);
         mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/setup/#", {qos: 0});
-        mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/sensorfriendlyname/#", {qos: 0});
+        mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/tempsensors", {qos: 0});
         mqtt.subscribe("home/kallio/refrigerator/" + myDevice + "/parameters/#", {qos: 0});
     }
 
@@ -86,6 +86,12 @@
         console.log("connection lost");
         setTimeout(MQTTconnect, reconnectTimeout);
     };
+
+
+    function timeredFunc(id, temperature)
+    {
+        $(id).html(temperature);
+    }
 
 
     function onMessageArrived(message) {
@@ -105,13 +111,6 @@
             $('#hipricereduce').val(obj.hipricereduce);    
             $('#sensors tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
         }
-        if (obj.id == "sensorfriendlyname")
-        {
-            console.log("got tempsensor " + obj.sensor);
-            $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
-                                 '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
-                                 '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
-        }
         if (obj.id == "cooler")
         {   
             $('#state').html(obj.value);
@@ -128,10 +127,32 @@
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
+        if (obj.id == "tempsensors")
+        {
+            console.log("got sensors");
+            sensorarr = obj.names;
+            for (sensor of sensorarr)
+            {
+                len = $("#F" + sensor.addr).length;
+                console.log("length is ", len);
+
+                console.log("got tempsensor " + sensor.addr);
+                if (len == 0)
+                {
+                    $('#sensors').append('<tr>><form id="F' + sensor.addr + '"><td><input type="text" readonly id="s' + sensor.addr + '" size=10 value="'+ sensor.addr +
+                                            '"/></td><td><input type="text" id="n' + sensor.addr + '" size=10 value="' + sensor.name +
+                                            '"/></td><td id="v' + sensor.addr + '">0</td><td><button type="button" onClick=setfriendlyname("' + sensor.addr + '")>Update</button></form></td></tr>');
+                }
+                else
+                {
+                    $("#n" + sensor.addr).val(sensor.name);
+                }
+            }
+        }
         if (obj.id == "temperature")
         {
             console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
-            $('#v'+ obj.sensor).html(obj.value);
+            setTimeout(() => {timeredFunc('#v'+ obj.sensor,obj.value);},100);
             if (obj.sensor == "574e13c97")
             {
                 $('#currtemp').html(obj.value);
@@ -139,7 +160,6 @@
             }
         }
     };
-
 
 
     $(document).ready(function() {

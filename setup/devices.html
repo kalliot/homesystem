@@ -63,6 +63,11 @@
         setTimeout(MQTTconnect, reconnectTimeout);
     };
 
+    function timeredFunc(dev)
+    {
+        $('#TR_'+ dev).remove();
+        $('#TRD_'+ dev).remove();
+    }
 
 
     function onMessageArrived(message) {
@@ -95,6 +100,7 @@
             if (obj.connected == 0)
             {
                 btnColor = 'gray';
+                setTimeout(() => {timeredFunc(obj.dev);},2000);
             }    
             else
             {
@@ -106,10 +112,10 @@
             if (len == 0) 
             {
                 console.log('style="color:' + btnColor + ';"');
-                $('#devices').append('<tr><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
+                $('#devices').append('<tr id="TR_' + obj.dev + '"><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
                                     '"/></td><td><input type="text" readonly id="T' + obj.dev + '" size=10 value="' + obj.type + 
                                     '"/></td><td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button></form></td></tr>');
-                $('#devices').append('<tr><td></td><td colspan="2" id="info' + obj.dev + '">No info available</td></tr>');
+                $('#devices').append('<tr id="TRD_' + obj.dev + '"><td></td><td colspan="2" id="info' + obj.dev + '">No info available</td></tr>');
             }
             else
             {
