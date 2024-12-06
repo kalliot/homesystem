@@ -80,9 +80,9 @@
         console.log("connected, myDevice is ", myDevice);
         mqtt.subscribe("home/kallio/devices/" + myDevice , {qos: 0});
         mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/setup/#", {qos: 0});
-        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/tempsensors", {qos: 0});
         mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/parameters/#", {qos: 0});
         mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/colors", {qos: 0});
+        mqtt.subscribe("home/kallio/rgb7segdisplay/" + myDevice + "/tempsensors", {qos: 0});
     }
 
 
@@ -92,10 +92,16 @@
     };
 
 
-    function timeredFunc(id, color)
+    function timeredColor(id, color)
     {
         $(id).val(color).change();
     }
+
+    function timeredTemperature(id, temperature)
+    {
+        $(id).html(temperature);
+    }
+
 
     function onMessageArrived(message) {
 
@@ -129,9 +135,9 @@
             $('#zonelow').val(obj.zonelow);
             // option selection must be done by timeout, because
             // maybe colors are not yet received, when we are here, receivin the setup.
-            setTimeout(() => {timeredFunc('#lowcolor',obj.lowcolor);},100);
-            setTimeout(() => {timeredFunc('#highcolor',obj.highcolor);},100);
-            setTimeout(() => {timeredFunc('#defaultcolor',obj.defaultcolor);},100);
+            setTimeout(() => {timeredColor('#lowcolor',obj.lowcolor);},100);
+            setTimeout(() => {timeredColor('#highcolor',obj.highcolor);},100);
+            setTimeout(() => {timeredColor('#defaultcolor',obj.defaultcolor);},100);
         }
         if (obj.id == "tempsensors")
         {
@@ -170,7 +176,7 @@
         if (obj.id == "temperature")
         {
             console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
-            setTimeout(() => {timeredFunc('#v'+ obj.sensor,obj.value);},100);
+            setTimeout(() => {timeredTemperature('#v'+ obj.sensor,obj.value);},100);
         }
     };
 
