@@ -1,0 +1,171 @@
+#!/usr/bin/env python
+
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import json
+import sys
+from queue import Queue, Empty
+
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+
+class sensor:
+    def __init__(self, index, name, color):
+        self.index = index
+        self.name = name
+        self.color = color
+        self.data = 0
+
+class sensor_array:
+    def __init__(self):
+        self.variables = [sensor(0,"makuuhuone","white"),
+                          sensor(1,"olohuone","red"),
+                          sensor(2,"santerin_huone","blue"),
+                          sensor(3,"sallan_huone","pink"),
+                          sensor(4,"nurkkahuone", "green"),
+                          sensor(5,"varasto", "cyan"),
+                          sensor(6,"keittiö", "yellow")]
+
+    def index(self,name):
+        for variable in self.variables:
+            if variable.name == name:
+                return variable.index
+        return -1        
+
+    def storedata(self, index, data):
+        for variable in self.variables:
+            if variable.index == index:
+                variable.data = int(data)
+                print("stored",data,"to index",index,variable.name)
+
+    def getdata(self, index):
+        for variable in self.variables:
+            if variable.index == index:
+                print("found data in index",index,"data=",variable.data, variable.name)
+                return variable
+        return self.variables[0]
+    
+sensors = sensor_array()
+
+def publishError(category, code, description):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "error",
+        "dev"     :      "zb2rgbled",
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/zb2rgbled"
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+def display(data, color):
+    global mqtt_broker
+
+    dispmsg = {
+        'dev': '5bc674',
+        'id': 'show',
+        'data': str(data),
+        'color': color
+    }
+    setdisplaytopic = mqtt_broker.topic_prefix + "/rgb7segdisplay/5bc674/data"
+    client.publish(setdisplaytopic,json.dumps(dispmsg), qos=0) # important: dont use retain flag.
+
+
+
+def handleCube(data):
+
+    action = 'none'
+    if not (data.get('action') is None):
+        action = data['action']
+
+    if action == "flip90":
+        print(datetime.now(), "flip")
+        rec = sensors.getdata(int(data['action_side']))
+        display(rec.data,rec.color)
+
+
+
+def handleTopics(recData):
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    data = json.loads(recData.payload)
+    if item == "Cube":
+        handleCube(data)
+    
+    else:
+        index = sensors.index(item)
+        if index != -1:
+            sensors.storedata(index,int(100 * float(data['temperature'])))
+            rec = sensors.getdata(index)
+            print("displaying data from ",rec.name,rec.data)
+            display(rec.data,rec.color)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("zigbee2mqtt/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+msgqueue = Queue(maxsize=10)    
+pid = os.getpid()
+
+
+client = mqtt.Client("zb2rgbled:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except Empty:
+        pass
+
+    except:
+        raise
