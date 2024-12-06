@@ -1,0 +1,408 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Status</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  </head>  
+
+
+    <body style="background-color:rgb(0, 0, 0); color:rgb(76, 139, 216);">
+    <h1>System status</h1>
+    <canvas id="demo"></canvas>
+    <div id="preview-textfield"></div>
+    <canvas id="burner"></canvas>
+    <div id="preview-textfield1"></div>
+    <canvas id="capasitor"></canvas>
+    <div id="preview-textfield2"></div>
+    <canvas id="power"></canvas>
+    <div id="preview-textfield3"></div>
+
+
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    <script src="config.js" type="text/javascript"></script>
+    <script src="dist/gauge.js"></script>
+    <script type="text/javascript">
+
+        
+    var mqtt;
+    var reconnectTimeout = 10000;
+
+
+    var capasitorOpts = {
+        // color configs
+        colorStart: "#6fadcf",
+        colorStop: "#6fadcf",
+        gradientType: 0,
+        strokeColor: "#e0e0e0",
+        generateGradient: true,
+        percentColors: [[0.0, "#a9d70b" ], [0.50, "#f9c802"], [1.0, "#ff0000"]],
+        // customize pointer
+        pointer: {
+            length: 0.8,
+            color: "#0571ab",
+            strokeWidth: 0.035,
+            iconScale: 1.0
+        },
+        // static labels
+        staticLabels: {
+            font: "10px sans-serif",
+            labels: [0, 400, 800, 1200, 1600, 2000],
+            color: "#0571ab",
+            fractionDigits: 0
+        },
+        // static zones
+        staticZones: [
+            {strokeStyle: "#06025c", min: 0, max: 400},
+            {strokeStyle: "#0a0396", min: 400, max: 800},
+            {strokeStyle: "#1812a1", min: 800, max: 1200},
+            {strokeStyle: "#1e15c2", min: 1200, max: 1600},
+            {strokeStyle: "#291fe0", min: 1600, max: 2000}
+        ],
+        // render ticks
+        renderTicks: {
+            divisions: 5,
+            divWidth: 1.1,
+            divLength: 0.7,
+            divColor: "#010221",
+            subDivisions: 3,
+            subLength: 0.5,
+            subWidth: 0.6,
+            subColor: "#010221"
+        },
+        // the span of the gauge arc
+        angle: -0.2,
+        // line thickness
+        lineWidth: 0.44,
+        // radius scale
+        radiusScale: 1.0,
+        // font size
+        fontSize: 40,
+        // if false, max value increases automatically if value > maxValue
+        limitMax: false,
+        // if true, the min value of the gauge will be fixed
+        limitMin: false,
+        // High resolution support
+        highDpiSupport: true
+    };
+
+    var powerOpts = {
+        // color configs
+        colorStart: "#6fadcf",
+        colorStop: "#6fadcf",
+        gradientType: 0,
+        strokeColor: "#e0e0e0",
+        generateGradient: true,
+        percentColors: [[0.0, "#a9d70b" ], [0.50, "#f9c802"], [1.0, "#ff0000"]],
+        // customize pointer
+        pointer: {
+            length: 0.8,
+            color: "#0571ab",
+            strokeWidth: 0.035,
+            iconScale: 1.0
+        },
+        // static labels
+        staticLabels: {
+            font: "10px sans-serif",
+            labels: [-10000, 4000],
+            color: "#0571ab",
+            fractionDigits: 0
+        },
+        // static zones
+        staticZones: [
+            {strokeStyle: "#06025c", min: -10000, max: 0},
+            {strokeStyle: "#1f46e0", min: 0, max: 4000}
+        ],
+        // render ticks
+        renderTicks: {
+            divisions: 2,
+            divWidth: 1.1,
+            divLength: 0.7,
+            divColor: "#010221",
+            subDivisions: 3,
+            subLength: 0.5,
+            subWidth: 0.6,
+            subColor: "#010221"
+        },
+        // the span of the gauge arc
+        angle: -0.2,
+        // line thickness
+        lineWidth: 0.44,
+        // radius scale
+        radiusScale: 1.0,
+        // font size
+        fontSize: 40,
+        // if false, max value increases automatically if value > maxValue
+        limitMax: true,
+        // if true, the min value of the gauge will be fixed
+        limitMin: true,
+        // High resolution support
+        highDpiSupport: true
+    };
+
+    var target = document.getElementById('demo'); 
+    var burnerTarget = document.getElementById('burner'); 
+    var capasitorTarget = document.getElementById('capasitor'); 
+    var powerTarget = document.getElementById('power'); 
+    //var gauge = new Gauge(target).setOptions(opts);
+    var gauge = new Gauge(target);
+    var burnerGauge = new Gauge(burnerTarget);
+    var capasitorGauge = new Gauge(capasitorTarget).setOptions(capasitorOpts);
+    var powerGauge = new Gauge(powerTarget).setOptions(powerOpts);
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+
+    function onConnect() {
+        mqtt.subscribe("home/kallio/heating/setup", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+        if (obj.id == "heatsetup")
+        {
+            console.log("got heatsetup", obj.stockelheater_lowtemp);
+
+            var opts = {
+                // color configs
+                colorStart: "#6fadcf",
+                colorStop: "#6fadcf",
+                gradientType: 0,
+                strokeColor: "#e0e0e0",
+                generateGradient: true,
+                percentColors: [[0.0, "#a9d70b" ], [0.50, "#f9c802"], [1.0, "#ff0000"]],
+                // customize pointer
+                pointer: {
+                    length: 0.8,
+                    color: "#0571ab",
+                    strokeWidth: 0.035,
+                    iconScale: 1.0
+                },
+                // static labels
+                staticLabels: {
+                    font: "10px sans-serif",
+                    labels: [40, 50, 60, 70, 80],
+                    color: "#0571ab",
+                    fractionDigits: 1
+                },
+                // static zones
+                staticZones: [
+                    {strokeStyle: "#06025c", min: 40, max: obj.stockelheater_lowtemp},          
+                    {strokeStyle: "#a89b0a", min: obj.stockelheater_lowtemp, max: obj.stockelheater_lowtemp + obj.stockelheater_hysteresis},  
+                    {strokeStyle: "#0a0396", min: obj.stockelheater_lowtemp + obj.stockelheater_hysteresis, max: obj.solelheater_lowtemp}, 
+                    {strokeStyle: "#a89b0a", min: obj.solelheater_lowtemp, max: obj.solelheater_lowtemp + obj.solelheater_hysteresis}, 
+                    {strokeStyle: "#430396", min: obj.solelheater_lowtemp + obj.solelheater_hysteresis, max: 80} 
+                ],
+                // render ticks
+                renderTicks: {
+                    divisions: 5,
+                    divWidth: 1.1,
+                    divLength: 0.7,
+                    divColor: "#010221",
+                    subDivisions: 3,
+                    subLength: 0.5,
+                    subWidth: 0.6,
+                    subColor: "#010221"
+                },
+                // the span of the gauge arc
+                angle: -0.2,
+                // line thickness
+                lineWidth: 0.44,
+                // radius scale
+                radiusScale: 1.0,
+                // font size
+                fontSize: 40,
+                // if false, max value increases automatically if value > maxValue
+                limitMax: false,
+                // if true, the min value of the gauge will be fixed
+                limitMin: false,
+                // High resolution support
+                highDpiSupport: true
+            };
+
+
+
+            var burnerOpts = {
+                // color configs
+                colorStart: "#6fadcf",
+                colorStop: "#6fadcf",
+                gradientType: 0,
+                strokeColor: "#e0e0e0",
+                generateGradient: true,
+                percentColors: [[0.0, "#a9d70b" ], [0.50, "#f9c802"], [1.0, "#ff0000"]],
+                // customize pointer
+                pointer: {
+                    length: 0.8,
+                    color: "#0571ab",
+                    strokeWidth: 0.035,
+                    iconScale: 1.0
+                },
+                // static labels
+                staticLabels: {
+                    font: "10px sans-serif",
+                    labels: [40, 50, 60, 70, 80],
+                    color: "#0571ab",
+                    fractionDigits: 1
+                },
+                // static zones
+                staticZones: [
+                    {strokeStyle: "#06025c", min: 40, max: obj.burner_lowtemp},          
+                    {strokeStyle: "#a89b0a", min: obj.burner_lowtemp, max: obj.burner_lowtemp + obj.burner_hysteresis},  
+                    {strokeStyle: "#430396", min: obj.burner_lowtemp + obj.burner_hysteresis, max: 80} 
+                ],
+                // render ticks
+                renderTicks: {
+                    divisions: 3,
+                    divWidth: 1.1,
+                    divLength: 0.7,
+                    divColor: "#010221",
+                    subDivisions: 3,
+                    subLength: 0.5,
+                    subWidth: 0.6,
+                    subColor: "#010221"
+                },
+                // the span of the gauge arc
+                angle: -0.2,
+                // line thickness
+                lineWidth: 0.44,
+                // radius scale
+                radiusScale: 1.0,
+                // font size
+                fontSize: 40,
+                // if false, max value increases automatically if value > maxValue
+                limitMax: false,
+                // if true, the min value of the gauge will be fixed
+                limitMin: false,
+                // High resolution support
+                highDpiSupport: true
+            };
+
+            gauge.setOptions(opts);
+            burnerGauge.setOptions(burnerOpts)
+            mqtt.subscribe("home/kallio/relay/+/shelly1/state");
+            mqtt.subscribe("home/kallio/elprice/current");
+            mqtt.subscribe("home/kallio/phase/all/elproduction");
+            mqtt.subscribe("home/kallio/error/#");
+            mqtt.subscribe("home/kallio/sensors/5bcae4/parameters/temperature/#");
+        }
+        
+        if (obj.id == "relay")
+        {   
+            console.log("got relay state");
+            switch (obj.contact)
+            {
+                case 0:  
+                break;
+
+                case 2:
+
+                case 3:
+                break;
+                
+                default:
+                break;
+            }
+        }
+        if (obj.id == "elprice")
+        {
+            console.log("got price");
+        }
+        if (obj.id == "elproduction")
+        {
+            console.log("got elproduction",obj.poweravg,obj.power );
+            var val = obj.W15min;
+            if (val < 0)
+            {
+                val = 0;
+            }
+            else if (val > 2000)
+            {
+                val = 2000;
+            }
+
+            capasitorGauge.set(val);
+            powerGauge.set(obj.power);
+        }
+        if (obj.id == "temperature" && obj.dev == "5bcae4")
+        {
+            if (obj.sensor == "746008f")
+            {
+                console.log("got top temperature",obj.value);
+                gauge.set(obj.value);
+            }    
+            if (obj.sensor == "574e13c75")
+            {
+                console.log("got center temperature",obj.value);
+                burnerGauge.set(obj.value);
+            }    
+
+        }
+    };
+
+
+    $(document).ready(function() {
+        MQTTconnect();
+        document.getElementById("preview-textfield").className = "preview-textfield";
+        gauge.setTextField(document.getElementById("preview-textfield"),1);
+        gauge.maxValue = 80;
+        gauge.setMinValue(40); 
+        gauge.animationSpeed = 32
+
+        document.getElementById("preview-textfield1").className = "preview-textfield1";
+        burnerGauge.setTextField(document.getElementById("preview-textfield1"),1);
+        burnerGauge.maxValue = 80;
+        burnerGauge.setMinValue(40); 
+        burnerGauge.animationSpeed = 32
+
+        //gauge.set(80);        
+        document.getElementById("preview-textfield2").className = "preview-textfield2";
+        capasitorGauge.setTextField(document.getElementById("preview-textfield2"));
+        capasitorGauge.maxValue = 2000;
+        capasitorGauge.setMinValue(0); 
+        capasitorGauge.animationSpeed = 32;
+
+        document.getElementById("preview-textfield3").className = "preview-textfield3";
+        powerGauge.setTextField(document.getElementById("preview-textfield3"));
+        powerGauge.maxValue = 4000;
+        powerGauge.setMinValue(-10000); 
+        powerGauge.animationSpeed = 32;
+    });
+
+    </script>
+    </body>
+</html>
