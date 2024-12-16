@@ -16,9 +16,43 @@ sys.path.insert(1, rundir + "config")
 from setup import *
 
 lastRead = 0
+devices =  []
+
+
+class sensorset:
+    def __init__(self, sensortype):
+        self.sensortype = sensortype
+        self.collection = []   # collection of similar sensors
+
+    def addSensor(self, sensor):
+        self.collection.append(sensor)
+
+    def clean(self, basetopic):
+        while self.collection:
+            sensor = self.collection.pop(0)
+            print(datetime.utcnow(), "removing", basetopic + self.sensortype + '/' + sensor)
+            client.publish(basetopic + self.sensortype + '/' + sensor, None, qos=0, retain=True)
+
+class device:
+    def __init__(self, devtype, id):
+        self.devtype = devtype
+        self.id = id
+        self.sensorsets = []
+
+    def addSensor(self, sensortype, sensorid):
+        sset = sensorset(sensortype)
+        sset.addSensor(sensorid)
+        self.sensorsets.append(sset)
+
+    def cleanSensors(self, devtype):
+        basetopic = mqtt_broker.topic_prefix + '/' + devtype + '/' + self.id + '/parameters/'
+        while self.sensorsets:
+            sset = self.sensorsets.pop(0)
+            sset.clean(basetopic)
+
 
 def processData(msg):
-    global lastRead
+    global lastRead, devices
 
     data = json.loads(msg.payload)
     id = data['id']
@@ -38,11 +72,16 @@ def processData(msg):
             print(datetime.utcnow(),"found disconnected device", data['dev'])
             cleanqueue.put(msg)
         elif not cleanqueue.empty():
-            print(datetime.utcnow(), data['dev'], "come alive, clearing the cleanqueue")
+            print(datetime.utcnow(),data['dev'], "come alive clearing the cleanqueue")
             cleanqueue.queue.clear()
 
     elif id == "tempsensors":
         print(datetime.utcnow(),"storing tempsensors of device", data['dev'])
+        dev = device('temperature', data['dev'])
+        for name in data['names']:
+            print(datetime.utcnow(), 'adding sensor addr', name['addr'])
+            dev.addSensor('temperature',name['addr'])
+        devices.append(dev)
 
 
 def clean_topics(msg):
@@ -57,6 +96,15 @@ def clean_topics(msg):
     client.publish(basetopic + '/statistics', None, qos=0, retain=True)
     client.publish(basetopic + '/tempsensors', None, qos=0, retain=True)
 
+    i = 0
+    while i < len(devices):
+        if devices[i].id == data['dev']:
+            devices[i].cleanSensors('thermostat')
+            item = devices.pop(i)
+            print(datetime.utcnow(), "removed",item.id,"from the list")
+            break
+        i += 1
+
     if devtype == 'rgb7segdisplay':
         client.publish(basetopic + '/colors', None, qos=0, retain=True)
         client.publish(basetopic + '/sensorsetup', None, qos=0, retain=True)
@@ -68,6 +116,9 @@ def clean_topics(msg):
         client.publish(basetopic + '/setup/heat', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/calibratehigh', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/calibratelow', None, qos=0, retain=True)
+        client.publish(basetopic + '/parameters/level', None, qos=0, retain=True)
+        client.publish(basetopic + '/parameters/targettemp', None, qos=0, retain=True)
+        client.publish(basetopic + '/parameters/temperature/ntc', None, qos=0, retain=True)
 
     elif devtype == 'refrigerator':
         client.publish(basetopic + '/sensorsetup', None, qos=0, retain=True)
