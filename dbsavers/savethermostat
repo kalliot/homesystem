@@ -5,29 +5,62 @@ import paho.mqtt.client as mqtt
 import os
 import influxdb_client
 import json
-from time import sleep
+import time
 import sys
 import RPi.GPIO as GPIO
 from queue import Queue
 from influxdb_client.client.write_api import SYNCHRONOUS
 from influxdb_client.domain.write_precision import WritePrecision
 
+targetTempInterval = 300
+prevTarget = -273
+targetDev = "-"
+lasttargettemp = time.time()
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 
-def saveData(recData):
+def savePrevTarget():
+    global prevTarget, targetDev
     storage = "testing"
 
-    if recData['id'] == "temperature":
-        client = influxdb_client.InfluxDBClient(
-            url=influx_credentials.url,
-            token=influx_credentials.token,
-            org=influx_credentials.org
-        )
+    if prevTarget == -273:
+        return
 
-        ts = int(recData['ts'])
+    client = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+
+    now = int(time.time())
+
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+    p = influxdb_client.Point("thermostat").tag("name","targettemp").field(targetDev, prevTarget).time(now,write_precision=WritePrecision.S)
+    print(datetime.now(),"writing targettemp with timeout", now, "value", prevTarget)
+    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+
+def saveData(recData):
+    global prevTarget, targetDev
+    storage = "testing"
+
+    client = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+
+    ts = int(recData['ts'])
+    now = int(time.time())
+
+    if ts == 0:
+        ts = now
+    if ((now - ts) > 7200): # dont save too old data
+        return
+
+    if recData['id'] == "temperature":
         temperature = float(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), temperature)
 
@@ -35,14 +68,24 @@ def saveData(recData):
         p = influxdb_client.Point("thermostat").tag("name","temperature").field(recData['sensor'], temperature).time(1000 * ts,write_precision=WritePrecision.MS)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
-    if recData['id'] == "thermostat":
-        client = influxdb_client.InfluxDBClient(
-            url=influx_credentials.url,
-            token=influx_credentials.token,
-            org=influx_credentials.org
-        )
+    if recData['id'] == "targettemp":
+        target = float(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), "targettemp:", datetime.fromtimestamp(ts), target, "prevtarget", prevTarget)
 
-        ts = int(recData['ts'])
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+
+        if (prevTarget != -273):
+            p = influxdb_client.Point("thermostat").tag("name","targettemp").field(recData['dev'], prevTarget).time(ts -1,write_precision=WritePrecision.S)
+            print(datetime.now(),"writing point", ts -1, "value", prevTarget)
+            write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+        p = influxdb_client.Point("thermostat").tag("name","targettemp").field(recData['dev'], target).time(ts,write_precision=WritePrecision.S)
+        print(datetime.now(),"writing point", ts, "value", target)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+        targetDev = recData['dev']
+        prevTarget = target
+
+    if recData['id'] == "thermostat":
         level = int(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), level)
 
@@ -74,7 +117,7 @@ def on_disconnect(client, userdata, rc):
 
     else:
         sleep(30)
- 
+
 
 led = 13
 GPIO.setwarnings(False)
@@ -93,6 +136,12 @@ print(datetime.now(), "Start")
 client.loop_start()
 
 while (True):
+    now = time.time()
+    diff = now - lasttargettemp
+    if diff > targetTempInterval:
+        savePrevTarget()
+        lasttargettemp = now
+
     try:
         data = msgqueue.get(block=True)
         if data is None:
@@ -101,6 +150,7 @@ while (True):
         saveData(json.loads(data))
         sys.stdout.flush()
         GPIO.output(led, GPIO.HIGH)
+
 
     except KeyboardInterrupt:
         client.disconnect()
