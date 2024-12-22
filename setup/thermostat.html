@@ -101,8 +101,10 @@
     function onConnect() {
         // Connection succeeded; subscribe to our topic
         console.log("connected");
+        mqtt.subscribe("home/kallio/devices/" + myDevice , {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/setup/#", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/parameters/#", {qos: 0});
+        mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/tempsensors", {qos: 0});
     }
 
 
@@ -144,13 +146,37 @@
             $('#pwmlen').val(obj.pwmlen);    
             $('#sensors tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
         }
-        if (obj.id == "sensorfriendlyname")
+        // obsolete
+        //if (obj.id == "sensorfriendlyname")
+        //{
+        //    console.log("got tempsensor" + obj.sensor);
+        //    $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
+        //                         '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
+        //                         '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
+        //}
+        if (obj.id == "tempsensors")
         {
-            console.log("got tempsensor" + obj.sensor);
-            $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
-                                 '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
-                                 '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
+            console.log("got sensors");
+            sensorarr = obj.names;
+            for (sensor of sensorarr)
+            {
+                len = $("#F" + sensor.addr).length;
+                console.log("length is ", len);
+
+                console.log("got tempsensor " + sensor.addr);
+                if (len == 0)
+                {
+                    $('#sensors').append('<tr>><form id="F' + sensor.addr + '"><td><input type="text" readonly id="s' + sensor.addr + '" size=10 value="'+ sensor.addr +
+                                            '"/></td><td><input type="text" id="n' + sensor.addr + '" size=10 value="' + sensor.name +
+                                            '"/></td><td id="v' + sensor.addr + '">0</td><td><button type="button" onClick=setfriendlyname("' + sensor.addr + '")>Update</button></form></td></tr>');
+                }
+                else
+                {
+                    $("#n" + sensor.addr).val(sensor.name);
+                }
+            }
         }
+
         if (obj.id == "thermostat")
         {   
             $('#level').html(obj.value);

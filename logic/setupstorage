@@ -70,10 +70,19 @@ def processData(msg):
         connected = int(data['connected'])
         if connected == 0:
             print(datetime.utcnow(),"found disconnected device", data['dev'])
-            cleanqueue.put(msg)
-        elif not cleanqueue.empty():
-            print(datetime.utcnow(),data['dev'], "come alive clearing the cleanqueue")
-            cleanqueue.queue.clear()
+            cleanqueue.append(msg)
+        elif len(cleanqueue):
+            # if device comes alive before mosquitto sent last will, mosquitto will
+            # send first testament and then i'm alive message.
+            # we should remove only data['dev'] device from queue
+            i = 0
+            while i < len(cleanqueue):
+                toclean = json.loads(cleanqueue[i].payload)
+                if toclean['dev'] == data['dev']:
+                    print(datetime.utcnow(),data['dev'], "come alive clearing elem from the cleanqueue")
+                    cleanqueue.pop(i)
+                    break
+                i += 1
 
     elif id == "tempsensors":
         print(datetime.utcnow(),"storing tempsensors of device", data['dev'])
@@ -99,7 +108,7 @@ def clean_topics(msg):
     i = 0
     while i < len(devices):
         if devices[i].id == data['dev']:
-            devices[i].cleanSensors('thermostat')
+            devices[i].cleanSensors(devtype)
             item = devices.pop(i)
             print(datetime.utcnow(), "removed",item.id,"from the list")
             break
@@ -125,11 +134,10 @@ def clean_topics(msg):
 
 def clean_inactive_devices():
     while (True):
-        try:
-            msg = cleanqueue.get(block=False)
+        if len(cleanqueue):
+            msg = cleanqueue.pop()
             clean_topics(msg)
-
-        except Empty:
+        else:
             print(datetime.utcnow(),"Nothing to clean")
             return
 
@@ -179,7 +187,7 @@ def on_disconnect(client, userdata, rc):
 
 
 msgqueue = Queue(maxsize=3)
-cleanqueue = Queue(maxsize=5)
+cleanqueue = []
 
 client = mqtt.Client("setupstorage" + str(os.getpid()))
 client.on_connect = on_connect
@@ -200,7 +208,7 @@ client.subscribe(topics)
 
 while True:
     try:
-        if cleanqueue.empty():
+        if len(cleanqueue) == 0:
             waittime = None
         else:
             waittime = 10
