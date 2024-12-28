@@ -60,6 +60,7 @@
     function sendPidSetup()
     {
         content = '{"dev":"' + myDevice +'", "id": "pidsetup"' +
+              ',"max":'   + $('#max').val() +
               ',"pidkp":' + $('#pidkp').val() +
               ',"pidki":' + $('#pidki').val() +
               ',"pidkd":' + $('#pidkd').val() + '}';
@@ -123,6 +124,11 @@
         }
     }
 
+    function timeredTemperature(id, temperature)
+    {
+        $(id).html(temperature);
+    }
+
     function onMessageArrived(message) {
 
         var topic = message.destinationName;
@@ -134,6 +140,7 @@
         if (obj.id == "pidsetup")
         {
             console.log("got pid");
+            $('#max').val(obj.max);
             $('#pidkp').val(obj.pidkp);
             $('#pidki').val(obj.pidki);
             $('#pidkd').val(obj.pidkd);
@@ -146,14 +153,6 @@
             $('#pwmlen').val(obj.pwmlen);    
             $('#sensors tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
         }
-        // obsolete
-        //if (obj.id == "sensorfriendlyname")
-        //{
-        //    console.log("got tempsensor" + obj.sensor);
-        //    $('#sensors').append('<tr>><form id="F' + obj.sensor + '"><td><input type="text" readonly id="s' + obj.sensor + '" size=10 value="'+ obj.sensor +
-        //                         '"/></td><td><input type="text" id="n' + obj.sensor + '" size=10 value="' + obj.name + 
-        //                         '"/></td><td id="v' + obj.sensor + '">0</td><td><button type="button" onClick=setfriendlyname("' + obj.sensor + '")>Update</button></form></td></tr>');
-        //}
         if (obj.id == "tempsensors")
         {
             console.log("got sensors");
@@ -191,7 +190,7 @@
             }    
             else
             {
-                $('#v'+ obj.sensor).html(obj.value);
+                setTimeout(() => {timeredTemperature('#v'+ obj.sensor,obj.value);},100);
             }
         }
         if (obj.id == "targettemp")
@@ -213,7 +212,7 @@
         console.log(myDevice);
         MQTTconnect();
     });
-
+s
     </script>
   </head>
   <body style="background-color:rgb(35, 39, 39); color:white;">
@@ -267,6 +266,11 @@
                 <input type="hidden" id="id" value="pidsetup"><br>
                 <table>
                 <tr><th colspan="2" text-align:center;>Pid setup</th></tr>
+                <tr><td><label for="max">Max</label></td>
+                    <td><input type="text"
+                                id="max"
+                                size=5/>
+                    </td></tr>
                 <tr><td><label for="pidkp">P</label></td>
                     <td><input type="text"
                                 id="pidkp"
