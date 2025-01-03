@@ -44,6 +44,18 @@
         mqtt.connect(options);
     }
 
+    function sendcalibration()
+    {
+        content = '{"dev":"' + myDevice + '"' +
+              ',"id":"' + $('#calibrtype').val() + '"' +
+              ',"temperature":"' + $('#caltemp').val()+ '"}';
+
+        console.log(content);
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+
     function sendsetup()
     {
         content = '{"dev":"' + myDevice +'", "id": "heatsetup"' + 
@@ -167,7 +179,7 @@
                 {
                     $('#sensors').append('<tr>><form id="F' + sensor.addr + '"><td><input type="text" readonly id="s' + sensor.addr + '" size=10 value="'+ sensor.addr +
                                             '"/></td><td><input type="text" id="n' + sensor.addr + '" size=10 value="' + sensor.name +
-                                            '"/></td><td id="v' + sensor.addr + '">0</td><td><button type="button" onClick=setfriendlyname("' + sensor.addr + '")>Update</button></form></td></tr>');
+                                            '"/></td><td id="v' + sensor.addr + '">0</td><td><button type="button" onClick=setfriendlyname("' + sensor.addr + '")>Update name</button></form></td></tr>');
                 }
                 else
                 {
@@ -247,8 +259,20 @@ s
             </td>
             </tr>    
                         
-            <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
+            <tr><td><button type="button" onClick="sendsetup()">Update setup</button></td></tr>
             </table>
+        </form>
+
+        <form>
+            <label for="id">Calibrate ntc sensor</label><br>
+                <select id="calibrtype">
+                    <option value="calibratehigh">High</option>
+                    <option value="calibratelow">Low</option>
+                </select>
+                <input type="text"
+                id="caltemp"
+                size=5/>
+            <button type="button" onClick="sendcalibration()">Calibrate</button>
         </form>
 
         <form> 
@@ -286,7 +310,7 @@ s
                                     id="pidkd"
                                     size=5/>
                         </td></tr>
-                <tr><td><button type="button" onClick="sendPidSetup()">Update</button></td></tr>
+                <tr><td><button type="button" onClick="sendPidSetup()">Update PID</button></td></tr>
                 </table>
             </form>
 

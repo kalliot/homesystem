@@ -100,10 +100,11 @@
             if (obj.connected == 0)
             {
                 btnColor = 'gray';
-                setTimeout(() => {timeredFunc(obj.dev);},2000);
+                setTimeout(() => {timeredFunc(obj.dev);},10);
             }    
             else
             {
+
                 btnColor = 'black';
                 mqtt.subscribe("home/kallio/" + obj.type + "/" + obj.dev + "/statistics", {qos: 0});
             }
