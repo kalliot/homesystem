@@ -69,6 +69,39 @@
         return false;
     }
 
+    // 'home/kallio/thermostat/5bdddc/setsetup' -m '{"dev":"5bdddc","id":"workdayboost","hours":"00001110000000011100000","change":1.0}'
+
+    function sendBoostSetup(hid, name)
+    {
+        console.log("sending boost hours");
+        var hours = "00000000000000000000000";
+        var a = [...hours];
+
+        for (let i=0; i < 24; i++)
+        {
+            checked = $(hid + i.toString()).attr('checked');
+            if (checked)
+            {
+                console.log("hour",i,"is checked");
+                a[i] = '1';
+            }
+        }
+        hours = a.join("");
+        console.log(hours);
+        console.log(hid + 'change');
+        change = $(hid + 'change').val();
+        content = '{"dev":"' + myDevice +'", "id":"' + name + '"' +
+              ',"hours":"'   + hours +
+              '","change":' + change + '}';
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+    }
+
+    function sendBoostSetups()
+    {
+        sendBoostSetup('#we','weekendboost');
+        sendBoostSetup('#wd','workdayboost');
+    }
+
     function sendPidSetup()
     {
         content = '{"dev":"' + myDevice +'", "id": "pidsetup"' +
@@ -82,13 +115,15 @@
         return false;
     }
 
-
-    function sendBrightnessSetup()
+    // {"dev":"5bdddc","id":"ntcreader","interval":15,"samples":10}
+    function setNtcReader()
     {
-        content = '{"dev":"' + myDevice +'", "id": "brightness", "value":' +  $('#brightness').val() + '}';
+        content = '{"dev":"' + myDevice +'", "id": "ntcreader"' +
+              ',"interval":'+ $('#ntcinterval').val() +
+              ',"samples":' + $('#ntcsamplecnt').val() + '}';
         console.log(content);
         mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
-        return false;
+        return;
     }
 
 
@@ -163,7 +198,6 @@
             $('#hiboost').val(obj.hiboost); 
             $('#lodeduct').val(obj.lodeduct);    
             $('#pwmlen').val(obj.pwmlen);    
-            $('#sensors tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
         }
         if (obj.id == "tempsensors")
         {
@@ -210,11 +244,89 @@
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
+        if (obj.id == "ntcreader")
+        {
+            $('#ntcinterval').val(obj.interval);
+            $('#ntcsamplecnt').val(obj.samples);
+        }
         if (obj.id == "brightness")
         {
             $('#brightness').val(obj.value);
             connectSlider('#brightness','#brightnessRange');
-            console.log("got brightness",obj.value);
+            color = '#000000';
+
+            switch (obj.value)
+            {
+                case 0:
+                case 1:
+                    color = '#4040af';
+                    break;
+
+                case 2:
+                    color = '#4545bf';
+                break;
+
+                case 3:
+                    color = '#5555cf';
+                break;
+
+                case 4:
+                    color = '#6565df';
+                break;
+
+                case 5:
+                    color = '#7575df';
+                break;
+
+                case 6:
+                    color = '#8585ff';
+                break;
+
+                case 7:
+                    color = '#9595ff';
+                break;
+
+                case 8:
+                    color = '#a5a5ff';
+                break;
+
+                default:
+                    color = '#6060ff';
+            }
+            $('#temperature').css('color',color);
+        }
+        if (obj.id == "workdayboost")
+        {
+            console.log("got workdayboost",obj.hours);
+            $("#wdchange").val(obj.change);
+            for (let i=0; i < 24; i++)
+            {
+               if (obj.hours.charAt(i) == '1')
+               {
+                    $("#wd" + i.toString()).attr('checked',1);
+               }
+               else
+               {
+                    $("#wd" + i.toString()).attr('checked',0);
+               }
+            }
+        }
+        if (obj.id == "weekendboost")
+        {
+            console.log("got weekendboost",obj.hours);
+            $("#wechange").val(obj.change);
+            for (let i=0; i < 24; i++)
+            {
+               if (obj.hours.charAt(i) == '1')
+               {
+                    $("#we" + i.toString()).attr('checked',1);
+               }
+               else
+               {
+                    $("#we" + i.toString()).attr('checked',0);
+               }
+            }
+
         }
     };
 
@@ -224,15 +336,24 @@
         console.log(myDevice);
         MQTTconnect();
     });
-s
+
     </script>
   </head>
   <body style="background-color:rgb(35, 39, 39); color:white;">
     <h1>Thermostat setup</h1>
     <div>
         <table><tr><td>
+        <form>
+            NTC temperature reader parameters
+            <table>
+            <tr><td>Interval</td><td><input type="text" id="ntcinterval" size=5/></td></tr>
+            <tr><td>Samples</td><td><input type="text" id="ntcsamplecnt" size=5/></td></tr>
+            <tr><td><button type="button" onClick="setNtcReader()">Set ntc reader</button></td></tr>
+        </form>
+        <br>
+
         <form> 
-            <input type="hidden" id="id" value="heatsetup"><br>
+            <input type="hidden" id="id" value="heatsetup">
             <table>
             <tr><td><label for="target">Target temperature </label></td>
                 <td><input type="text" 
@@ -245,7 +366,7 @@ s
                             id="hiboost" 
                             size=5/>
             </td>
-
+            <tr></tr>
             <tr><td><label for="lodeduct">Decrease when price is high</label></td>
                 <td><input type="text" 
                             id="lodeduct" 
@@ -275,6 +396,35 @@ s
             <button type="button" onClick="sendcalibration()">Calibrate</button>
         </form>
 
+        <form>
+            <input type="hidden" id="id" value="pidsetup"><br>
+            <table>
+            <tr><th colspan="2" text-align:center;>Pid setup</th></tr>
+            <tr><td><label for="max">Max C</label></td>
+                <td><input type="text"
+                            id="max"
+                            size=5/>
+                </td></tr>
+            <tr><td><label for="pidkp">P</label></td>
+                <td><input type="text"
+                            id="pidkp"
+                            size=5/>
+                </td></tr>
+                <tr><td><label for="pidki">I</label></td>
+                    <td><input type="text"
+                                id="pidki"
+                                size=5/>
+                    </td></tr>
+                <tr><td><label for="pidkd">D</label></td>
+                    <td><input type="text"
+                                id="pidkd"
+                                size=5/>
+                    </td></tr>
+            <tr><td><button type="button" onClick="sendPidSetup()">Update PID</button></td></tr>
+            </table>
+        </form>
+
+
         <form> 
             <input type="hidden" id="id" value="sensorfriendlyname"><br>
             <table id="sensors">
@@ -282,61 +432,88 @@ s
             <tr><th>sensor</th><th>name</th><th>value</th></thead></tr>
             </table>
         </form>
+
+        <form>
+            Measured values
+            <table>
+            <tr><td><label for="brightness">Brightness</label></td>
+                <td><input type="text"
+                            id="brightness"
+                            size=5
+                            readonly/>
+                </td>
+                <td><input type="range"
+                    min="0"
+                    max="16"
+                    step="1"
+                    id="brightnessRange"
+                    disabled/>
+                </td>
+            </tr>
+            </table>
+        </form>
+
+        <table>
+            <tr><td>Floor current target</td><td id="currtarget"></td></tr>
+            <tr><td>Thermostat current level </td><td id="level"></td></tr>
+            <tr><td>Floor temperature</td><td id="temperature"></td></tr>
+        </table>
         </td>
 
-
         <td valign = top>
-            <form>
-                <input type="hidden" id="id" value="pidsetup"><br>
-                <table>
-                <tr><th colspan="2" text-align:center;>Pid setup</th></tr>
-                <tr><td><label for="max">Max</label></td>
-                    <td><input type="text"
-                                id="max"
-                                size=5/>
-                    </td></tr>
-                <tr><td><label for="pidkp">P</label></td>
-                    <td><input type="text"
-                                id="pidkp"
-                                size=5/>
-                    </td></tr>
-                    <tr><td><label for="pidki">I</label></td>
-                        <td><input type="text"
-                                    id="pidki"
-                                    size=5/>
-                        </td></tr>
-                    <tr><td><label for="pidkd">D</label></td>
-                        <td><input type="text"
-                                    id="pidkd"
-                                    size=5/>
-                        </td></tr>
-                <tr><td><button type="button" onClick="sendPidSetup()">Update PID</button></td></tr>
-                </table>
-            </form>
-
-            <form>
-                <table>
-                <tr><td><label for="brightness">Brightness</label></td>
-                    <td><input type="text"
-                                id="brightness"
-                                size=5
-                                onchange="connectSlider('#brightness','#brightnessRange',sendBrightnessSetup)"/>
-                    </td>
-                    <td><input type="range"
-                        min="0"
-                        max="16"
-                        step="1"
-                        id="brightnessRange"
-                        oninput="connectSlider('#brightnessRange','#brightness', sendBrightnessSetup)">
-                    </td>
-                </tr>
-                </table>
-            </form>
-
             <table>
-                <tr><td>Floor current target</td><td id="currtarget"></td></tr>
-                <tr><td>Thermostat current level </td><td id="level"></td></tr>
-                <tr><td>Floor temperature</td><td id="temperature"></td></tr>
+                <tr><th text-align:left;>Workday</th><th text-align:left;>Week end</th></tr>
+                <tr><th text-align:left;>Hours</th><th text-align:left;>Hours</th></tr>
+                <tr><td><input type="checkbox" id="wd0"/><label for="wd0">00</label></td>
+                    <td><input type="checkbox" id="we0"/><label for="we0">00</label></td></tr>
+                <tr><td><input type="checkbox" id="wd1" name="wd1"/><label for="wd1">01</label></td>
+                    <td><input type="checkbox" id="we1" name="we1"/><label for="we1">01</label></td></tr>
+                <tr><td><input type="checkbox" id="wd2" name="wd2"/><label for="wd2">02</label></td>
+                    <td><input type="checkbox" id="we2" name="we2"/><label for="we2">02</label></td></tr>
+                <tr><td><input type="checkbox" id="wd3" name="wd3"/><label for="wd3">03</label></td>
+                    <td><input type="checkbox" id="we3" name="we3"/><label for="we3">03</label></td></tr>
+                <tr><td><input type="checkbox" id="wd4" name="wd4"/><label for="wd4">04</label></td>
+                    <td><input type="checkbox" id="we4" name="we4"/><label for="we4">04</label></td></tr>
+                <tr><td><input type="checkbox" id="wd5" name="wd5"/><label for="wd0">05</label></td>
+                    <td><input type="checkbox" id="we5" name="we5"/><label for="we0">05</label></td></tr>
+                <tr><td><input type="checkbox" id="wd6" name="wd6"/><label for="wd1">06</label></td>
+                    <td><input type="checkbox" id="we6" name="we6"/><label for="we1">06</label></td></tr>
+                <tr><td><input type="checkbox" id="wd7" name="wd7"/><label for="wd2">07</label></td>
+                    <td><input type="checkbox" id="we7" name="we7"/><label for="we2">07</label></td></tr>
+                <tr><td><input type="checkbox" id="wd8" name="wd8"/><label for="wd3">08</label></td>
+                    <td><input type="checkbox" id="we8" name="we8"/><label for="we3">08</label></td></tr>
+                <tr><td><input type="checkbox" id="wd9" name="wd9"/><label for="wd4">09</label></td>
+                    <td><input type="checkbox" id="we9" name="we9"/><label for="we4">09</label></td></tr>
+                <tr><td><input type="checkbox" id="wd10" name="wd10"/><label for="wd10">10</label></td>
+                    <td><input type="checkbox" id="we10" name="we10"/><label for="we10">10</label></td></tr>
+                <tr><td><input type="checkbox" id="wd11" name="wd11"/><label for="wd11">11</label></td>
+                    <td><input type="checkbox" id="we11" name="we11"/><label for="we11">11</label></td></tr>
+                <tr><td><input type="checkbox" id="wd12" name="wd12"/><label for="wd12">12</label></td>
+                    <td><input type="checkbox" id="we12" name="we12"/><label for="we12">12</label></td></tr>
+                <tr><td><input type="checkbox" id="wd13" name="wd13"/><label for="wd13">13</label></td>
+                    <td><input type="checkbox" id="we13" name="we13"/><label for="we13">13</label></td></tr>
+                <tr><td><input type="checkbox" id="wd14" name="wd14"/><label for="wd14">14</label></td>
+                    <td><input type="checkbox" id="we14" name="we14"/><label for="we14">14</label></td></tr>
+                <tr><td><input type="checkbox" id="wd15" name="wd15"/><label for="wd10">15</label></td>
+                    <td><input type="checkbox" id="we15" name="we15"/><label for="we10">15</label></td></tr>
+                <tr><td><input type="checkbox" id="wd16" name="wd16"/><label for="wd11">16</label></td>
+                    <td><input type="checkbox" id="we16" name="we16"/><label for="we11">16</label></td></tr>
+                <tr><td><input type="checkbox" id="wd17" name="wd17"/><label for="wd12">17</label></td>
+                    <td><input type="checkbox" id="we17" name="we17"/><label for="we12">17</label></td></tr>
+                <tr><td><input type="checkbox" id="wd18" name="wd18"/><label for="wd13">18</label></td>
+                    <td><input type="checkbox" id="we18" name="we18"/><label for="we13">18</label></td></tr>
+                <tr><td><input type="checkbox" id="wd19" name="wd19"/><label for="wd14">19</label></td>
+                    <td><input type="checkbox" id="we19" name="we19"/><label for="we14">19</label></td></tr>
+                <tr><td><input type="checkbox" id="wd20" name="wd20"/><label for="wd20">20</label></td>
+                    <td><input type="checkbox" id="we20" name="we20"/><label for="we20">20</label></td></tr>
+                <tr><td><input type="checkbox" id="wd21" name="wd21"/><label for="wd21">21</label></td>
+                    <td><input type="checkbox" id="we21" name="we21"/><label for="we21">21</label></td></tr>
+                <tr><td><input type="checkbox" id="wd22" name="wd22"/><label for="wd22">22</label></td>
+                    <td><input type="checkbox" id="we22" name="we22"/><label for="we22">22</label></td></tr>
+                <tr><td><input type="checkbox" id="wd23" name="wd23"/><label for="wd22">23</label></td>
+                    <td><input type="checkbox" id="we23" name="we23"/><label for="we22">23</label></td></tr>
+                <tr><td>change<br><input type="text" id="wdchange" size=5/></td><td>change<br><input type="text" id="wechange" size=5/></td></tr>
+                <tr><td><button type="button" onClick="sendBoostSetups()">Update boost hours</button></td></tr>
             </table>
         </td>
         </tr></table>
