@@ -85,9 +85,10 @@
         setTimeout(MQTTconnect, reconnectTimeout);
     };
 
-    function timeredFunc(id, temperature)
+    function timeredFunc(id, temperature, color)
     {
         $(id).html(temperature);
+        $(id).css('color',color);
     }
 
 
@@ -133,7 +134,9 @@
         if (obj.id == "temperature")
         {
             console.log("got temperature from sensor ", obj.sensor, "value ", obj.value);
-            setTimeout(() => {timeredFunc('#v'+ obj.sensor,obj.value);},100);
+            if (obj.err == 0) color = '#ffffff';
+            else color = '#ff4040'
+            setTimeout(() => {timeredFunc('#v'+ obj.sensor,obj.value, color);},100);
         }
         if (obj.id == "counter")
         {
