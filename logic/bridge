@@ -14,7 +14,7 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 boilertempreader = "5bcae4"
-centertempsensor = "574e13c75"
+centertempsensor = "574e13c10"
 esptempsensor = "a130097"
 cloud_refresh_interval = 60
 
@@ -39,6 +39,28 @@ class flooding:
                 buff += fitem + ' '
         return buff
 
+class door:
+    def __init__(self):
+        self.items = []
+
+    def add(self, item):
+        if item not in self.items:
+            self.items.append(item)
+
+    def remove(self, item):
+        try:
+            self.items.remove(item)
+        except:
+            pass
+
+    def getItems(self):
+        buff = "All closed"
+        if self.items.count != 0:
+            buff = ""
+            for fitem in self.items:
+                buff += fitem + ' '
+        return buff
+
 
 class overview:
     def __init__(self):
@@ -50,7 +72,6 @@ class overview:
         self.esptemp        = 0
         self.boilertemp     = 0
         self.electricity    = 0
-        self.waterleak      = "None"
         self.lastsend       = int(time.time()) - 57 # first send 3 sec after start.
 
 
@@ -69,13 +90,17 @@ class overview:
                 "esp"       :    self.esptemp,
                 "boiler"    :    self.boilertemp,
                 "electricity":   self.electricity,
-                "waterleak":     floodings.getItems()
+                "waterleak":     floodings.getItems(),
+                "doors"    :     doors.getItems()
             }
             topic = mqtt_broker.topic_prefix + "/overview"
             cloud.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
+
 compiled = overview()
 floodings = flooding()
+doors = door()
+
 
 
 def getJsonNumericVar(source, name, defvalue):
@@ -101,6 +126,13 @@ def handleFloodings(data, item):
         floodings.add(item)
     else:
         floodings.remove(item)
+
+def handleDoors(data, item):
+    state = getJsonVar(data,'contact', False)
+    if state:
+        doors.remove(item)
+    else:
+        doors.add(item)
 
 
 def parseOtherTopics(topic, data):
@@ -130,16 +162,35 @@ def parseOtherTopics(topic, data):
         handleFloodings(data, topic)
         compiled.send()
 
+    elif topic == "boiler_door":
+        handleDoors(data, topic)
+        compiled.send()
+
+    elif topic == "store_door":
+        handleDoors(data, topic)
+        compiled.send()
+
+    elif topic == "balkong_door":
+        handleDoors(data, topic)
+        compiled.send()
+
+
 def parseHomeTopics(data):
     global centertempsensor
     id = data['id']
 
     if id == "temperature":
         if data['sensor'] == centertempsensor:
-            compiled.boilertemp = round(getJsonNumericVar(data,'value',compiled.boilertemp),2)
+            if int(data['err']) == 0:
+                compiled.boilertemp = round(getJsonNumericVar(data,'value',compiled.boilertemp),2)
+            else:
+                compiled.boilertemp = -273.0
             compiled.send()
         if data['sensor'] == esptempsensor:
-            compiled.esptemp = round(getJsonNumericVar(data,'value',compiled.esptemp),2)
+            if int(data['err']) == 0:
+                compiled.esptemp = round(getJsonNumericVar(data,'value',compiled.esptemp),2)
+            else:
+                compiled.esptemp = -273.0
             compiled.send()
 
     elif id == "elproduction":
