@@ -83,11 +83,13 @@ boilertempreader = "5bcae4"
 
 boilertempsensor = "746008f"
 centertempsensor = "574e13c75"
+bottomtempsensor = "574e13cb0"
 hotwatertempsensor = "7360083"
 
 
 boilertemp = 0.0
 centertemp = 0.0
+bottomtemp = 0.0
 
 
 def getJsonVar(source, name, defvalue):
@@ -156,7 +158,7 @@ def elheaterOnByProduction(elHeater):
 
 
 def elheaterOn(elHeater, max):
-    global currentconsumption, avgconsumption, boilertemp, centertemp
+    global currentconsumption, avgconsumption, boilertemp, centertemp, bottomtemp
     global elhysteresis
 
     if elHeater.boosted:
@@ -196,7 +198,7 @@ def checkBoost():
 
 
 def processData(eldata):
-    global taxedprice, sellprice, currentconsumption, boilertemp, centertemp
+    global taxedprice, sellprice, currentconsumption, boilertemp, centertemp, bottomtemp
     global avgconsumption, W15min, quart, flameburning
     global relayonminimum, elheater2kw, elheater4kw, hotWaterTemp, prevHotWaterTemp
 
@@ -271,6 +273,8 @@ def processData(eldata):
                 boilertemp = float(eldata['value'])
             elif eldata['sensor'] == centertempsensor:
                 centertemp = float(eldata['value'])
+            elif eldata['sensor'] == bottomtempsensor:
+                bottomtemp = float(eldata['value'])
             elif eldata['sensor'] == hotwatertempsensor:
                 now = time.time()
                 hotWaterTemp = float(eldata['value'])
@@ -300,7 +304,7 @@ def processData(eldata):
                     publishError("burner", 3000, "burner stopped too early, only " + str(int(diff)) + " seconds since preheat started.")
                     print(datetime.utcnow(),"burner stopped too early")
 
-    if boilertemp != 0.0 and centertemp != 0.0:  # value is something else than initial value
+    if boilertemp != 0.0 and centertemp != 0.0 and bottomtemp != 0:  # value is something else than initial value
         if burner.faultstate == True:
             print(datetime.utcnow(),"BURNERFAULT is on, now running by only electric heater")
             elheaterOn(elheater4kw, hsetup.maxconsumption)
@@ -333,18 +337,27 @@ def processData(eldata):
                 starttemp += hsetup.hotwaterboost
             if centertemp <= starttemp:
                 burner.setState(True)
+            if bottomtemp <= 30.0:
+                burner.setState(True)
             else:
+                now = time.time()
                 stoptemp = burner.lowtemp + burner.hysteresis
                 if burner.boosted:
                     stoptemp += hsetup.hotwaterboost
-                if centertemp >= stoptemp:
-                    burner.setState(False)
+                diff = int(now - burner.changets)
+                if diff >= 420:    # keep burner on atleast 8 minutes
+                    if centertemp >= stoptemp:
+                        burner.setState(False)
+                    if bottomtemp >= 40.0:
+                        burner.setState(False)
+
 
     print(datetime.utcnow(),"sellprice:", sellprice - hsetup.elselcommission, end=", ")
     print("consumption:", currentconsumption, end=", ")
     print("avgconsumption:", avgconsumption, end=", ")
     print("boilertemp:", boilertemp, end=", ")
     print("centertemp:", centertemp, end=", ")
+    print("bottomtemp:", bottomtemp, end=", ")
     print("elstate2kw:", elheater2kw.state, end=", ")
     print("elstate4kw:", elheater4kw.state, end=", ")
     print("burnerstate:", burner.state)
