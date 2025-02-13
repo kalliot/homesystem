@@ -97,7 +97,7 @@ def clean_topics(msg):
     data = json.loads(msg.payload)
     print(datetime.utcnow(),"Cleaning", data['type'],"device", data['dev'])
     client.publish(msg.topic, None, qos=0, retain=True)
-    devtype = data['type'];
+    devtype = data['type']
     basetopic = mqtt_broker.topic_prefix + '/' + devtype + '/' + data['dev']
 
     client.publish(basetopic + '/setup', None, qos=0, retain=True)
@@ -107,7 +107,7 @@ def clean_topics(msg):
 
     i = 0
     while i < len(devices):
-        if devices[i].id == data['dev']:
+        if devices[i].id == data['dev']: # find the device from devices list
             devices[i].cleanSensors(devtype)
             item = devices.pop(i)
             print(datetime.utcnow(), "removed",item.id,"from the list")
@@ -121,13 +121,15 @@ def clean_topics(msg):
     elif devtype == 'thermostat':
         client.publish(basetopic + '/setup/pid', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/ntc', None, qos=0, retain=True)
-        client.publish(basetopic + '/setup/brightness', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/heat', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/calibratehigh', None, qos=0, retain=True)
         client.publish(basetopic + '/setup/calibratelow', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/workdayboost', None, qos=0, retain=True)
+        client.publish(basetopic + '/setup/weekendboost', None, qos=0, retain=True)
         client.publish(basetopic + '/parameters/level', None, qos=0, retain=True)
         client.publish(basetopic + '/parameters/targettemp', None, qos=0, retain=True)
         client.publish(basetopic + '/parameters/temperature/ntc', None, qos=0, retain=True)
+        client.publish(basetopic + '/parameters/brightness', None, qos=0, retain=True)
 
     elif devtype == 'refrigerator':
         client.publish(basetopic + '/sensorsetup', None, qos=0, retain=True)
