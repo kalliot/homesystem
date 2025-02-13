@@ -11,10 +11,8 @@
     var mqtt;
     var reconnectTimeout = 10000;
     var myDevice = "none";
+    var temperatureHysteresis = 0.15;
 
-
-    // still missing: NTC calibration
-    //                Display brightness
 
     function MQTTconnect() {
         mqtt = new Paho.MQTT.Client(
@@ -171,9 +169,10 @@
         }
     }
 
-    function timeredTemperature(id, temperature)
+    function timeredTemperature(id, temperature, color)
     {
         $(id).html(temperature);
+        $(id).css('color',color);
     }
 
     function onMessageArrived(message) {
@@ -231,16 +230,36 @@
         {   
             if (obj.sensor == "ntc")
             {
+                targ = Number($('#currtarget').html());
+                temperature = Number(obj.value);
+                console.log('targ=',targ);
+                color = '#ffffff';
+
+                if (temperature < (targ - temperatureHysteresis))
+                    color = '#6060ff';
+                if (temperature > (targ + temperatureHysteresis))
+                    color = '#ff4040';
+                $('#temperature').css('color', color);
                 $('#temperature').html(obj.value);
                 console.log("got temperature",obj.value);
             }    
             else
             {
-                setTimeout(() => {timeredTemperature('#v'+ obj.sensor,obj.value);},100);
+                if (obj.err == 0) ncolor = '#ffffff';
+                else ncolor = '#ff4040'
+                setTimeout(() => {timeredTemperature('#v'+ obj.sensor,obj.value, ncolor);},100);
             }
         }
         if (obj.id == "targettemp")
         {   
+            temperature = Number($('#temperature').html());
+            targ = Number(obj.value);
+            color = '#ffffff';
+            if (temperature < (targ - temperatureHysteresis))
+                color = '#6060ff';
+            if (temperature > (targ + temperatureHysteresis))
+                color = '#ff4040';
+            $('#temperature').css('color',color);
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
@@ -253,47 +272,6 @@
         {
             $('#brightness').val(obj.value);
             connectSlider('#brightness','#brightnessRange');
-            color = '#000000';
-
-            switch (obj.value)
-            {
-                case 0:
-                case 1:
-                    color = '#4040af';
-                    break;
-
-                case 2:
-                    color = '#4545bf';
-                break;
-
-                case 3:
-                    color = '#5555cf';
-                break;
-
-                case 4:
-                    color = '#6565df';
-                break;
-
-                case 5:
-                    color = '#7575df';
-                break;
-
-                case 6:
-                    color = '#8585ff';
-                break;
-
-                case 7:
-                    color = '#9595ff';
-                break;
-
-                case 8:
-                    color = '#a5a5ff';
-                break;
-
-                default:
-                    color = '#6060ff';
-            }
-            $('#temperature').css('color',color);
         }
         if (obj.id == "workdayboost")
         {
