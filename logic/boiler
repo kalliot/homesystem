@@ -1,0 +1,567 @@
+#!/usr/bin/env python
+
+import time
+import os
+from datetime import datetime
+from datetime import timezone
+import json
+import paho.mqtt.client as mqtt 
+import paho.mqtt.subscribe as subscribe
+from queue import Queue, Empty
+import sys
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+sellprice = 300                             # is 3eur/kwh enough high price?
+taxedprice = 300
+currentconsumption = 0
+W15min = 0
+quart = 0
+avgconsumption = currentconsumption
+shellynumber = 1
+relayonminimum = 120                           # put is on minimum seconds
+burner_max_preheat = 900
+elhysteresis = 200
+flameburning = False
+magnetvalve = "33"
+boilertempreader = "5bcae4" # id of the esp box
+
+class DsSensor:
+    def __init__(self, name, id):
+        self.eventts = time.time()
+        self.datats = 0
+        self.errstate = 0
+        self.temperature = -273
+        self.diff = 0 # difference to previous sample
+        self.timediff = 0
+        self.normalinterval = 20 * 60 # sud be at least 15 minutes
+        self.id = id
+        self.name = name
+
+    def setSample(self, temperature, err, ts):
+        self.eventts = time.time()
+        self.timediff = ts - self.datats
+        self.datats = ts
+        self.diff = temperature - self.temperature # positive when temperature is increasing
+        self.temperature = temperature
+        if self.errstate != 0 and err == 0:
+            publishError("burner", 3004, "temperature sensor: " + self.name + " is OK.")
+        self.errstate = err 
+
+    def isValid(self, now):
+        if self.errstate != 0:
+            return False
+        if now - self.eventts > self.normalinterval: # sensors device may be dead
+            self.errstate = 1
+            return False
+        return True
+
+class TempSensors:
+    def __init__(self):
+        now = time.time()
+        self.lastValidityChk = now
+        self.initTs = now
+        self.sensors = [DsSensor("top","746008f"),
+                        DsSensor("center","574e13c10"),
+                        DsSensor("bottom","574e13cb0"),
+                        DsSensor("hotwater","7360083")]
+
+    def isAllBad(self, now):
+        totalCnt = len(self.sensors)
+        failCnt = 0
+        if (now - self.lastValidityChk) > 300:
+            self.lastValidityChk = now
+            for sensor in self.sensors:
+                if not sensor.isValid(now):
+                    print(datetime.utcnow(),'sensor', sensor.name, 'is not valid')
+                    publishError("burner", 3002, "temperature sensor: " + sensor.name + " is not working.")
+                    ret = False
+                    failCnt += 1
+        return failCnt == totalCnt
+
+    def setAllToState(self, state):
+        for sensor in self.sensors:
+            sensor.errstate = state
+        
+
+
+    # During first 10 seconds check, has all temperature sensors got
+    # some data. After 10 seconds, dont care. Rest of the processing
+    # should survive with some failed sensors
+
+    def isAllInitialized(self):
+        ret = True
+        now = time.time()
+
+        if (now - self.initTs) < 10:
+            for sensor in self.sensors:
+                if sensor.temperature == -273:
+                    ret = False
+        return ret
+
+    def getSensorByName(self,name):
+        for sensor in self.sensors:
+            if sensor.name == name:
+                return sensor
+        return -1
+
+    def getSensorById(self,id):
+        for sensor in self.sensors:
+            if sensor.id == id:
+                return sensor
+        return -1
+
+    def refreshDataById(self,id, temperature, err, ts):
+        for sensor in self.sensors:
+            if sensor.id == id:
+                sensor.setSample(temperature, err, ts)
+
+    def refreshDataByName(self, name, temperature, err, ts):
+        sensor = self.getSensorByName(name)
+        if sensor != -1:
+            sensor.setSample(temperature, err, ts)
+
+class heatSetup:
+    def __init__(self):
+        self.relayonminimum  = 120                           # put is on minimum seconds
+        self.eltype          = 'fixed'                       # el agreement, price is fixed c/kWh
+        self.elprice         = 7.8                           # fixed: real price. stock: buy commission
+        self.transferprice   = 6.5
+        self.elselcommission = 0.24
+        self.maxconsumption  = -6000                         # start heating of waterboiler, only if consumption is bigger than this.
+        self.heatoilprice    = 1.61                          # eur/liter
+        self.hotwaterboost   = 2.0                           # if hotwater temp is increasing, raise burner start temperature
+        self.stockelboost    = 5
+        self.burnerbackupstart = 35
+        self.burnerbackuphyst = 3
+
+
+hsetup = heatSetup()
+
+class heater:
+    def __init__(self, name, shellynumber, relay, low, hysteresis, power):
+        self.shellynumber = shellynumber
+        self.name = name
+        self.relay = relay
+        self.lowtemp = low
+        self.hysteresis = hysteresis
+        self.power = power
+        self.changets = int(time.time())
+        self.pendingTs = self.changets
+        self.state = False
+        self.pendingState = False
+        self.boosted = False
+        self.faultstate = False
+        self.changePending = False
+
+    def setState(self, setByMe, newState):
+        now = int(time.time())
+        if not setByMe:
+            if newState == self.pendingState and self.changePending:
+                print(datetime.utcnow(),'relay', self.name, 'resetting changePending.')
+                self.changePending = False
+            self.state = newState
+            self.changets = now
+        else:
+            if self.state == newState:
+                return
+
+            diff = now - self.changets
+            if diff < 3: 
+                time.sleep(3-diff) # in case of bug, prevent relay glitches
+            now = int(time.time())
+            
+            self.pendingState = newState
+            relaymsg = {
+                'id': 'relay',
+                'contact': self.relay,
+                'duration': now - self.changets,
+                'state': newState
+            }
+            
+            setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(self.shellynumber) + "/setstate"
+            self.changePending = True
+            self.pendingTs = now
+            client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
+            print(datetime.utcnow(),setrelaytopic,json.dumps(relaymsg))
+
+    def setState_isok_poista_kun_em_toimii(self, setByMe, newState):
+        if newState == self.state:
+            if self.changePending:
+                print(datetime.utcnow(),'relay', self.name, 'resetting changePending.')
+                self.changePending = False
+            return
+
+        
+        now = int(time.time())
+        diff = now - self.changets;
+
+        if diff < 3: 
+            time.sleep(3-diff) # in case of bug, prevent relay 
+
+        now = int(time.time())
+        self.changets = now
+        self.state = newState
+        if setByMe:
+            relaymsg = {
+                'id': 'relay',
+                'contact': self.relay,
+                'duration': now - self.changets,
+                'state': newState
+            }
+            
+            setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(self.shellynumber) + "/setstate"
+            self.changePending = True
+            #client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
+            print(datetime.utcnow(),setrelaytopic,json.dumps(relaymsg))
+
+
+class Heaters:
+    def __init__(self, heaters):
+        self.relays = heaters
+
+    def verify(self, now):
+        for relay in self.relays:
+            diff = int(now - relay.pendingTs)
+            if relay.changePending and diff > 5: # normally relay replies in less than one second
+                print(datetime.utcnow(),'relay', relay.name, 'is not alive.','changediff is', diff)
+                publishError("relay", 3003, "remote relay " + relay.name + " is not alive.")
+
+    def setStateByNumber(self, number, setByMe, state):
+        for relay in self.relays:
+            if relay.relay == number:
+                print(datetime.utcnow(), "received relay msg, setting ", relay.name, "to", state)
+                relay.setState(setByMe, state)
+
+
+burner      = heater('burner',1, 3, 51.8, 0.4, 0)
+elheater2kw = heater('solel',1, 0, 73.0, 2.0, 2000)
+elheater4kw = heater('stockel',1, 2, 55.0, 2.0, 4000)
+heaters = Heaters([burner, elheater2kw, elheater4kw])
+
+tempSensors = TempSensors()
+boiler = tempSensors.getSensorByName('top')
+center = tempSensors.getSensorByName('center')
+bottom = tempSensors.getSensorByName('bottom')
+water  = tempSensors.getSensorByName('hotwater')
+
+
+def getJsonVar(source, name, defvalue):
+    try:
+        ret = source[name]
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
+
+def getJsonNumericVar(source, name, defvalue):
+    try:
+        ret = float(source[name])
+    except:
+        print(datetime.utcnow(), "Warning: failed to read json variable", name)
+        publishError("json", 1002, "failed to read json variable:" + name)
+        return defvalue
+
+    if ret != defvalue:
+        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+    return ret
+
+
+def publishError(category, code, description):
+    global shellynumber
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "error",
+        "dev"     :      "boiler",
+        "ts"      :      now,
+        "category":      category,
+        "code"    :      code,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/error/relay/boiler" 
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+# using avgconsumption, to put relay on more carelessly
+def elheaterOnByProduction(elHeater, boiler):
+    global avgconsumption, relayonminimum
+    global quart, W15min
+
+    timeleft = 900 - quart
+    remain = elHeater.power - avgconsumption
+    # avoid division by zero
+    if remain == 0:
+        remain = 1
+
+    result = (timeleft * remain / 3600) - W15min / 4
+
+    if timeleft > relayonminimum and \
+        result < 5 and \
+        boiler.temperature <= elHeater.lowtemp:
+        elHeater.setState(True, True)
+    elif W15min < 0.0 or \
+        boiler.temperature >= (elHeater.lowtemp + elHeater.hysteresis):
+        elHeater.setState(True, False)
+
+
+def elheaterOn(elHeater, max, boiler):
+    global currentconsumption, avgconsumption
+    global elhysteresis
+
+    if elHeater.boosted:
+        limit = elHeater.lowtemp + hsetup.stockelboost
+    else:
+        limit = elHeater.lowtemp
+
+    if elHeater.state == True and boiler.temperature >= (limit + elHeater.hysteresis):
+        elHeater.setState(True, False)
+        return
+
+    # note: avgconsumption and maxconsumption are negative
+
+    if elHeater.state == False:
+        if avgconsumption > max:
+            if boiler.temperature <= limit:
+                print(datetime.utcnow(),"Putting stock heater on")
+                elHeater.setState(True, True)
+
+    elif avgconsumption  < (max - elHeater.power - elhysteresis):
+        print(datetime.utcnow(),"currentconsumption:",currentconsumption,"is less than",max - elHeater.power - elhysteresis)
+        print(datetime.utcnow(),"Putting stock heater off")
+        elHeater.setState(True, False)
+
+
+
+def processData(eldata):
+    global taxedprice, sellprice, currentconsumption
+    global avgconsumption, W15min, quart, flameburning
+    global relayonminimum, elheater2kw, elheater4kw
+
+    if not (eldata.get('id') is None):
+        id = eldata['id']
+
+        if id == 'elprice':
+            current_date = datetime.utcnow().strftime("%Y%m%d%H")
+            if (current_date != eldata['day']):
+                publishError("datetime", 1001, "current prices timestamp is not valid:" + eldata['day'])
+                print(datetime.utcnow(),"current prices timestamp is not valid")
+            else:
+                sellprice = float(eldata['notax'])
+                taxedprice = float(eldata['price'])
+                if eldata['pricestate'] == 'low':
+                    print(datetime.utcnow(),"BOOST is active")
+                    elheater4kw.boosted = True
+                else:
+                    elheater4kw.boosted = False
+                    print(datetime.utcnow(),"BOOST is passive")
+        
+        elif id == 'heatsetup':
+            print(datetime.utcnow(),"got heatsetup")
+            burner.faultstate = False # This is the method to reset burner.faultstate. Otherwise you should restart this program.
+
+            hsetup.relayonminimum   = getJsonNumericVar(eldata, 'relayonminimum',   hsetup.relayonminimum)
+            hsetup.elselcommission  = getJsonNumericVar(eldata, 'elselcommission',  hsetup.elselcommission)
+            hsetup.transferprice    = getJsonNumericVar(eldata, 'eltransferprice',  hsetup.transferprice)
+            hsetup.eltype           = getJsonVar(eldata,        'eltype',           hsetup.eltype)
+            hsetup.elprice          = getJsonNumericVar(eldata, 'elprice',          hsetup.elprice)
+            hsetup.maxconsumption   = getJsonNumericVar(eldata, 'maxconsumption',   hsetup.maxconsumption)
+            hsetup.heatoilprice     = getJsonNumericVar(eldata, 'heatoilprice',     hsetup.heatoilprice)
+            hsetup.hotwaterboost    = getJsonNumericVar(eldata, 'hotwaterboost',    hsetup.hotwaterboost)
+            hsetup.burnerbackupstart= getJsonNumericVar(eldata, 'bottom_lowtemp',   hsetup.burnerbackupstart)
+            hsetup.burnerbackuphyst = getJsonNumericVar(eldata, 'bottom_hysteresis',hsetup.burnerbackuphyst)
+            hsetup.stockelboost     = getJsonNumericVar(eldata, 'stockel_boost',    hsetup.stockelboost)
+
+            burner.lowtemp          = getJsonNumericVar(eldata, 'burner_lowtemp',    burner.lowtemp)
+            burner.hysteresis       = getJsonNumericVar(eldata, 'burner_hysteresis', burner.hysteresis)
+            elheater2kw.lowtemp     = getJsonNumericVar(eldata, 'solelheater_lowtemp',  elheater2kw.lowtemp)
+            elheater2kw.hysteresis  = getJsonNumericVar(eldata, 'solelheater_hysteresis',elheater2kw.hysteresis)
+
+            elheater4kw.lowtemp     = getJsonNumericVar(eldata, 'stockelheater_lowtemp',  elheater4kw.lowtemp)
+            elheater4kw.hysteresis  = getJsonNumericVar(eldata, 'stockelheater_hysteresis',elheater4kw.hysteresis)
+
+        elif id == "device":
+            if int(eldata['connected']) == 0:
+                print(datetime.utcnow(),"sensors box, with id", eldata['dev'] , "died.")
+                tempSensors.setAllToState(1)
+
+        elif id == "relay":
+            contact = int(eldata['contact'])
+            # we come here atleast when somebody clics relay states from
+            # the relay buttons or from the cloud.
+            heaters.setStateByNumber(contact, False, eldata['state'])
+
+        elif id == "elproduction" and \
+              eldata['phase'] == 'all':
+            currentconsumption = int(eldata['power'])
+            avgconsumption = int(eldata['poweravg'])
+            W15min = float(eldata['W15min'])
+            quart  = int(eldata['seconds'])
+
+        elif id == "temperature":
+            tempSensors.refreshDataByName(eldata['name'], float(eldata['value']), int(eldata['err']), int(eldata['ts']))
+
+        elif id == "state":
+            now = time.time()
+            flameburning = (eldata['value'] == 1)
+            if flameburning == True:
+                if burner.state == True:
+                    diff = int(now - burner.changets)
+                    print(datetime.utcnow(),"burner preheat took", diff, "seconds.")
+                    if burner.faultstate == True:
+                        print(datetime.utcnow(),"burner faultstate cancelled.")
+                        burner.faultstate = False
+            else:
+                if burner.state == False:
+                    print(datetime.utcnow(),"burner stopped successfully")
+                else:
+                    diff = int(now - burner.changets)
+                    burner.faultstate = True
+                    publishError("sensor", 3000, "burner stopped too early, only " + str(int(diff)) + " seconds since preheat started.")
+                    print(datetime.utcnow(),"burner stopped too early")
+
+    if not tempSensors.isAllInitialized():
+        return
+
+    if water.errstate == 0 and water.timediff < 2:
+        if ((water.diff) > 0.4) and (burner.state == False): # don't turn on boost, if burner is already runnning
+            burner.boosted = True
+        elif (water.diff < 0.0) and ((now - burner.changets) > 600):
+            burner.boosted = False
+
+    if burner.faultstate == True:
+        print(datetime.utcnow(),"BURNERFAULT is on, now running by only electric heater")
+        elheaterOn(elheater4kw, hsetup.maxconsumption, boiler)
+    else:
+        if hsetup.eltype == 'fixed':
+            elheater4kw.setState(True, False)
+            if (sellprice - hsetup.elselcommission) < (hsetup.elprice + hsetup.transferprice):
+                elheaterOnByProduction(elheater2kw, boiler)
+            else:
+                # if price is high, dont care about consumption, just keep relay off.
+                elheater2kw.setState(True, False)
+
+        if hsetup.eltype == 'stock':
+            if (hsetup.heatoilprice * 10.8) > (sellprice - hsetup.elselcommission): # Sellprice should be compared to heating with oil
+                elheaterOnByProduction(elheater2kw, boiler)
+            else:
+                elheater2kw.setState(True, False)
+
+            # next, heating with low electricity stock price
+            nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice,2)
+            if elheater2kw.state == False and (hsetup.heatoilprice * 10.8) > nettoprice:
+                elheaterOn(elheater4kw, hsetup.maxconsumption, boiler)
+            else:
+                elheater4kw.setState(True, False)
+
+
+        # in case boiler temp drops too low, put the burner on anyway.
+        now = time.time()
+        if center.errstate == 0:
+            starttemp = burner.lowtemp
+            if burner.boosted:
+                starttemp += hsetup.hotwaterboost
+            if center.temperature <= starttemp:
+                burner.setState(True, True)
+            else:
+                stoptemp = burner.lowtemp + burner.hysteresis    
+                if burner.boosted:
+                    stoptemp += hsetup.hotwaterboost
+                if center.temperature >= stoptemp:
+                    burner.setState(True, False)
+
+        else: # center temperature sensor is in failure
+            if bottom.errstate == 0:
+                if bottom.temperature <= hsetup.burnerbackupstart:
+                    burner.setState(True, True)
+                else:
+                    stoptemp = hsetup.burnerbackupstart + hsetup.burnerbackuphyst
+                    if bottom.temperature >= stoptemp: 
+                        burner.setState(True, False)
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+def on_connect(client, userdata, flags, rc):
+    global shellynumber, boilertempreader, magnetvalve
+    global mqtt_broker
+
+    if (rc==0):
+        topics = [
+                (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
+                (mqtt_broker.topic_prefix + "/heating/setup",0),
+                (mqtt_broker.topic_prefix + "/devices/" + boilertempreader,0),
+                (mqtt_broker.topic_prefix + "/elprice/current",0),
+                (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve,0),
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
+        ]
+        client.subscribe(topics)
+
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+
+
+def on_publish(client, userdata,result):
+    pass
+
+
+msgqueue = Queue(maxsize=15)
+
+
+client = mqtt.Client("boiler" + str(elheater2kw.relay) + ":" + str(burner.relay) + str(os.getpid())) #create new instance
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+while True:
+    now = time.time()
+    if tempSensors.isAllBad(now):
+        burner.setState(True, True) # sensors box may be down, keep burner on -> it is using hardware thermostat.
+    heaters.verify(now)
+    
+    diff = int(now - burner.changets)
+    if burner.state == True and flameburning == False and diff > burner_max_preheat and center.isValid(now) and center.temperature < burner.lowtemp:
+        if burner.faultstate == False:
+            publishError("burner", 3001, "Burner fault or magnetvalve sensor fault. Preheat started " + str(diff) + " seconds ago.")
+            print(datetime.utcnow(),"oil burner has not started")
+        burner.faultstate = True
+
+    try:
+        data = msgqueue.get(block=True, timeout=300)
+        if data is None:
+            continue
+        if len(data):
+            processData(json.loads(data))
+
+    except Empty:
+        print(datetime.utcnow(), "Timeout")
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+    except:
+        raise        
+
+    sys.stdout.flush()
