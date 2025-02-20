@@ -202,8 +202,9 @@
                 break;
             }
         }
-        if (obj.id == "device" && obj.id == "5bcae4")
+        if (obj.id == "device" && obj.dev == "5bcae4")
         {
+            console.log('device ' + obj.dev + 'state changed to ' + obj.connected )
             if (obj.connected == 0)
             {
                 color = '#ff4040'
