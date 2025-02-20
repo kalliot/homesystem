@@ -1,0 +1,27 @@
+#!/usr/bin/env python
+
+import time
+import os
+from sys import path
+import paho.mqtt.publish as publish
+import json
+
+path.insert(1, '/home/pi/config')
+from influx_credentials import mqtt_broker
+
+
+ts = int(time.time())
+os.environ['TZ'] = "Europe/Helsinki"
+time.tzset()
+local_time = time.localtime()
+offset = int(time.strftime("%z", local_time)) * 36
+print(offset)
+
+
+jsonRec = {
+    "id"    :  "tzoffset",
+    "value" : offset,
+    "ts"    : ts
+}
+
+publish.single("home/kallio/tzoffset", json.dumps(jsonRec), hostname=mqtt_broker.address, retain=True)

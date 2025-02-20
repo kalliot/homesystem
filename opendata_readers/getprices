@@ -120,24 +120,31 @@ class specialHour():
 
     def delRec(self, strtime):
         for i in range(self.count):
-            if (self.times[i] == strtime):
-                self.times.pop(i)
-                self.prices.pop(i)
-                self.reasons.pop(i)
-                self.tstamps.pop(i)
-                self.count -= 1
-                break
+            try:
+                if (self.times[i] == strtime):
+                    self.times.pop(i)
+                    self.prices.pop(i)
+                    self.reasons.pop(i)
+                    self.tstamps.pop(i)
+                    self.count -= 1
+                    break
+
+            except IndexError:
+                return
 
     def clear(self, name):
         for i in range(self.count):
-            if self.reasons[i] != name:
-                print("removing time", self.times[i])
-                self.times.pop(i)
-                self.prices.pop(i)
-                self.reasons.pop(i)
-                self.tstamps.pop(i)
-                self.count -= 1
+            try:
+                if self.reasons[i] != name:
+                    print("removing time", self.times[i])
+                    self.times.pop(i)
+                    self.prices.pop(i)
+                    self.reasons.pop(i)
+                    self.tstamps.pop(i)
+                    self.count -= 1
 
+            except IndexError:
+                return
 
 
     def publish(self):

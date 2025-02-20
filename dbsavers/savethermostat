@@ -14,6 +14,7 @@ from influxdb_client.domain.write_precision import WritePrecision
 
 targetTempInterval = 300
 prevTarget = -273
+prevBrightness = -1
 targetDev = "-"
 lasttargettemp = time.time()
 
@@ -23,7 +24,7 @@ from setup import *
 
 def savePrevTarget():
     global prevTarget, targetDev
-    storage = "testing"
+    storage = "weekly"
 
     if prevTarget == -273:
         return
@@ -41,16 +42,39 @@ def savePrevTarget():
     print(datetime.now(),"writing targettemp with timeout", now, "value", prevTarget)
     write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
+def savePrevBrightness():
+    global prevBrightness, targetDev
+    storage = "weekly"
 
-def saveData(recData):
-    global prevTarget, targetDev
-    storage = "testing"
+    if prevBrightness == -1:
+        return
 
     client = influxdb_client.InfluxDBClient(
         url=influx_credentials.url,
         token=influx_credentials.token,
         org=influx_credentials.org
     )
+
+    now = int(time.time())
+
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+    p = influxdb_client.Point("thermostat").tag("name","brightnes").field(targetDev, prevBrightness).time(now,write_precision=WritePrecision.S)
+    print(datetime.now(),"writing brightness with timeout", now, "value", prevBrightness)
+    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+
+def saveData(recData):
+    global prevTarget, targetDev, prevBrightness
+    storage = "weekly"
+
+    client = influxdb_client.InfluxDBClient(
+        url=influx_credentials.url,
+        token=influx_credentials.token,
+        org=influx_credentials.org
+    )
+
+    if recData.get('ts') is None: # timestamp is missing, dont care about this
+        return
 
     ts = int(recData['ts'])
     now = int(time.time())
@@ -85,10 +109,16 @@ def saveData(recData):
         targetDev = recData['dev']
         prevTarget = target
 
+    if recData['id'] == "brightness":
+        brightness = int(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), "brightness", brightness)
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        p = influxdb_client.Point("thermostat").tag("name","display").field("brightness", brightness).time(1000 * ts,write_precision=WritePrecision.MS)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
     if recData['id'] == "thermostat":
         level = int(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), level)
-
         write_api = client.write_api(write_options=SYNCHRONOUS)
         p = influxdb_client.Point("thermostat").tag("name","heater").field("level", level).time(1000 * ts,write_precision=WritePrecision.MS)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
