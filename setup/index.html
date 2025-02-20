@@ -42,20 +42,23 @@
 
     function sendsetup()
     {
-        content = '{"id": "' + $('#id').val() + '"' + 
-              ',"elselcommission":' + $('#elselcommission').val() + 
-              ',"eltransferprice":' + $('#eltransferprice').val() + 
+        content = '{"id": "' + $('#id').val() + '"' +
+              ',"elselcommission":' + $('#elselcommission').val() +
+              ',"eltransferprice":' + $('#eltransferprice').val() +
               ',"eltype":"' +         $('input[name="eltype"]:checked').val() + '"' +
-              ',"elprice":' +         $('#elprice').val() + 
-              ',"maxconsumption":' +  $('#maxconsumption').val() + 
-              ',"heatoilprice":' +    $('#heatoilprice').val() + 
-              ',"relayonminimum":' +  $('#relayonminimum').val() + 
-              ',"solelheater_lowtemp":' + $('#solelstart').val() + 
-              ',"solelheater_hysteresis":' + $('#solelstop').val() + 
-              ',"stockelheater_lowtemp":' + $('#stockelstart').val() + 
-              ',"stockelheater_hysteresis":' + $('#stockelstop').val() + 
-              ',"hotwaterboost":' + $('#hotwaterboost').val() + 
-              ',"burner_lowtemp":' + $('#burnerstart').val() + 
+              ',"elprice":' +         $('#elprice').val() +
+              ',"maxconsumption":' +  $('#maxconsumption').val() +
+              ',"heatoilprice":' +    $('#heatoilprice').val() +
+              ',"relayonminimum":' +  $('#relayonminimum').val() +
+              ',"solelheater_lowtemp":' + $('#solelstart').val() +
+              ',"solelheater_hysteresis":' + $('#solelstop').val() +
+              ',"stockelheater_lowtemp":' + $('#stockelstart').val() +
+              ',"stockel_boost":' + $('#stockelboost').val() +
+              ',"stockelheater_hysteresis":' + $('#stockelstop').val() +
+              ',"hotwaterboost":' + $('#hotwaterboost').val() +
+              ',"bottom_lowtemp":' + $('#bottomstart').val() +
+              ',"bottom_hysteresis":' + $('#bottomstop').val() +
+              ',"burner_lowtemp":' + $('#burnerstart').val() +
               ',"burner_hysteresis":' + $('#burnerstop').val() + '}'
 
               console.log(content);
@@ -70,6 +73,7 @@
         mqtt.subscribe("home/kallio/elprice/current");
         mqtt.subscribe("home/kallio/phase/all/elproduction");
         mqtt.subscribe("home/kallio/error/#");
+        mqtt.subscribe("home/kallio/devices/5bcae4");
         mqtt.subscribe("home/kallio/sensors/5bcae4/parameters/#");
 
         $('#topic').val(topic);
@@ -150,13 +154,14 @@
                 $('#pricelabel').html('Fixed price');
             }
             $('#elprice').val(obj.elprice);    // stock commission or fixed price, depending of eltype
-            $('#maxconsumption').val(obj.maxconsumption);    
-            $('#heatoilprice').val(obj.heatoilprice);    
+            $('#maxconsumption').val(obj.maxconsumption);
+            $('#heatoilprice').val(obj.heatoilprice);
             $('#relayonminimum').val(obj.relayonminimum);
             $('#solelstart').val(obj.solelheater_lowtemp);
             $('#solelstop').val(obj.solelheater_hysteresis);
             $('#stockelstart').val(obj.stockelheater_lowtemp);
             $('#stockelstop').val(obj.stockelheater_hysteresis);
+            $('#stockelboost').val(obj.stockelboost);
             $('#burnerstart').val(obj.burner_lowtemp);
             $('#burnerstop').val(obj.burner_hysteresis);
             $('#hotwaterboost').val(obj.hotwaterboost);
@@ -169,6 +174,7 @@
             connectSlider('#burnerstart','#burnerTempStartRange');
             connectSlider('#burnerstop','#burnerTempStopRange');
             connectSlider('#hotwaterboost','#hotWaterBoostRange');
+            connectSlider('#stockelboost','#stockElBoostRange');
         }
         
         if (obj.id == "relay")
@@ -196,6 +202,20 @@
                 break;
             }
         }
+        if (obj.id == "device" && obj.id == "5bcae4")
+        {
+            if (obj.connected == 0)
+            {
+                color = '#ff4040'
+            }
+            else
+            {
+                color = '#ffffff'
+            }
+            $('#currtemp').css('color',color);
+            $('#centertemp').css('color',color);
+            $('#bottomtemp').css('color',color);
+        }
         if (obj.id == "elprice")
         {
             $('#currentprice').html(obj.notax + " / " + obj.price);
@@ -210,15 +230,30 @@
         {
             if (obj.sensor == "746008f")
             {
+                if (obj.err == 0) color = '#ffffff';
+                else color = '#ff4040'
+                $('#currtemp').css('color',color);
                 $('#currtemp').html(obj.value);
                 setNeedle(obj.value,'#solElTempStartRange','#solelneedle')
                 setNeedle(obj.value,'#stockElTempStartRange','#stockelneedle')
             }
-            if (obj.sensor == "574e13c75")
+            if (obj.sensor == "574e13c10")
             {
+                if (obj.err == 0) color = '#ffffff';
+                else color = '#ff4040'
+                $('#centertemp').css('color',color);
                 $('#centertemp').html(obj.value);
                 setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
             }
+            if (obj.sensor == "574e13cb0")
+            {
+                if (obj.err == 0) color = '#ffffff';
+                else color = '#ff4040'
+                $('#bottomtemp').css('color',color);
+                $('#bottomtemp').html(obj.value);
+                setNeedle(obj.value,'#burnerBottomStartRange','#bottomneedle')
+            }
+
         }
         if (obj.id == "state" && obj.dev=="5bcae4" && obj.sensor == 33)
         {
@@ -301,6 +336,7 @@
                            id="relayMinSeconds" 
                            oninput="connectSlider('#relayMinSeconds','#relayonminimum')">
                 </td>
+                <td>Hysteresis</td>
             </tr>    
                
 
@@ -362,6 +398,23 @@
                 </td>              
             </tr>
 
+
+            <tr><td><label for="stockelboost">Stock el boost when low price:</label></td>
+                <td><input type="text"
+                    id="stockelboost"
+                    size=3
+                    onchange="connectSlider('#stockelboost','#stockElBoostRange')">
+                </td>
+                <td><input type="range"
+                    min="0.0"
+                    max="6.0"
+                    step="0.1"
+                    id="stockElBoostRange"
+                    oninput="connectSlider('#stockElBoostRange','#stockelboost')">
+                </td>
+            </tr>
+
+
             <tr><td><label for="burnerstart">Center temperatures for oil burner:</label></td>
                 <td><input type="text" 
                            id="burnerstart" 
@@ -389,20 +442,48 @@
                            oninput="connectSlider('#burnerTempStopRange','#burnerstop')">
                 </td></tr>
 
-            <tr><td><label for="hotwaterboost">Burner boost for need of hotwater:</label></td>
-                <td><input type="text" 
-                    id="hotwaterboost" 
-                    size=3 
-                    onchange="connectSlider('#hotwaterboost','#hotWaterBoostRange')">
-                </td>
-                <td><input type="range" 
-                    min="0.0" 
-                    max="4.0" 
-                    step="0.1" 
-                    id="hotWaterBoostRange" 
-                    oninput="connectSlider('#hotWaterBoostRange','#hotwaterboost')">
-                 </td></tr>
-            </tr>
+
+                <tr><td><label for="bottomstart">Bottom temperature for oil burner (backup sensor):</label></td>
+                    <td><input type="text"
+                               id="bottomstart"
+                               size=3
+                               onchange="connectSlider('#bottomstart','#burnerBottomStartRange')">
+                    </td>
+                    <td><div class="container"><input type="range"
+                               min="30"
+                               max="36"
+                               step="0.1"
+                               id="burnerBottomStartRange"
+                               oninput="connectSlider('#burnerBottomStartRange','#bottomstart')">
+                    <div id="bottomneedle" class="needle"></div>
+                    </div></td>
+                    <td><input type="text"
+                               id="bottomstop"
+                               size=3
+                               onchange="connectSlider('#burnerstop','#burnerBottomStopRange')">
+                    </td>
+                    <td><input type="range"
+                               min="0.2"
+                               max="5.0"
+                               step="0.1"
+                               id="burnerBottomStopRange"
+                               oninput="connectSlider('#burnerBottomStopRange','#bottomstop')">
+                    </td></tr>
+
+                <tr><td><label for="hotwaterboost">Burner boost for need of hotwater:</label></td>
+                    <td><input type="text"
+                        id="hotwaterboost"
+                        size=3
+                        onchange="connectSlider('#hotwaterboost','#hotWaterBoostRange')">
+                    </td>
+                    <td><input type="range"
+                        min="0.0"
+                        max="4.0"
+                        step="0.1"
+                        id="hotWaterBoostRange"
+                        oninput="connectSlider('#hotWaterBoostRange','#hotwaterboost')">
+                    </td></tr>
+                </tr>
                         
             <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
             </table>
@@ -417,6 +498,7 @@
                 <tr><td>Current electricity stock price notax/tax</td><td id="currentprice"></td><td>Cents</td></tr>
                 <tr><td>Boiler top (sol/el) temperature</td><td id="currtemp"></td><td>C</td></tr>
                 <tr><td>Boiler center (burner) temperature</td><td id="centertemp"></td><td>C</td></tr>
+                <tr><td>Boiler bottom temperature</td><td id="bottomtemp"></td><td>C</td></tr>
                 <tr><td><a href="statusdisplay.html">Status display</a><td></tr>
                 <tr><td><a href="devices.html">Devices</a><td></tr>
             </table>
