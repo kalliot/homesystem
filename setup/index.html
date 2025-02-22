@@ -61,7 +61,6 @@
               ',"burner_lowtemp":' + $('#burnerstart').val() +
               ',"burner_hysteresis":' + $('#burnerstop').val() + '}'
 
-              console.log(content);
         mqtt.send("home/kallio/heating/setup", content, 0 , true);
     }
 
@@ -103,7 +102,6 @@
         max = parseFloat($(src).attr('max'));
         min = parseFloat($(src).attr('min'));
 
-        console.log('min',min,'max',max,'value',value);    
         if (value >= min && value <= max)
         {
             srcRange = max - min;
@@ -165,6 +163,8 @@
             $('#burnerstart').val(obj.burner_lowtemp);
             $('#burnerstop').val(obj.burner_hysteresis);
             $('#hotwaterboost').val(obj.hotwaterboost);
+            $('#bottomstart').val(obj.bottom_lowtemp);
+            $('#bottomstop').val(obj.bottom_hysteresis);
 
             connectSlider('#relayonminimum','#relayMinSeconds');
             connectSlider('#solelstart','#solElTempStartRange');
@@ -175,6 +175,8 @@
             connectSlider('#burnerstop','#burnerTempStopRange');
             connectSlider('#hotwaterboost','#hotWaterBoostRange');
             connectSlider('#stockelboost','#stockElBoostRange');
+            connectSlider('#bottomstart','#burnerBottomStartRange');
+            connectSlider('#bottomstop','#burnerBottomStopRange');
         }
         
         if (obj.id == "relay")
@@ -220,7 +222,6 @@
         if (obj.id == "elprice")
         {
             $('#currentprice').html(obj.notax + " / " + obj.price);
-            setNeedle(obj.notax,'#priceRange','#priceneedle')
         }
         if (obj.id == "elproduction")
         {
@@ -229,7 +230,7 @@
 
         if (obj.id == "temperature" && obj.dev=="5bcae4")
         {
-            if (obj.sensor == "746008f")
+            if (obj.name == "top")
             {
                 if (obj.err == 0) color = '#ffffff';
                 else color = '#ff4040'
@@ -238,7 +239,7 @@
                 setNeedle(obj.value,'#solElTempStartRange','#solelneedle')
                 setNeedle(obj.value,'#stockElTempStartRange','#stockelneedle')
             }
-            if (obj.sensor == "574e13c10")
+            if (obj.name == "center")
             {
                 if (obj.err == 0) color = '#ffffff';
                 else color = '#ff4040'
@@ -246,7 +247,7 @@
                 $('#centertemp').html(obj.value);
                 setNeedle(obj.value,'#burnerTempStartRange','#burnerneedle')
             }
-            if (obj.sensor == "574e13cb0")
+            if (obj.name == "bottom")
             {
                 if (obj.err == 0) color = '#ffffff';
                 else color = '#ff4040'
@@ -450,8 +451,8 @@
                                onchange="connectSlider('#bottomstart','#burnerBottomStartRange')">
                     </td>
                     <td><div class="container"><input type="range"
-                               min="30"
-                               max="36"
+                               min="28"
+                               max="37"
                                step="0.1"
                                id="burnerBottomStartRange"
                                oninput="connectSlider('#burnerBottomStartRange','#bottomstart')">

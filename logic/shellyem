@@ -29,6 +29,12 @@ all_power_avg = []
 prevpower = 0
 W15min = 0
 prevseconds = 901
+
+# recTs is the timestamp of last received data from shelly energy meter
+# If this meter stops to send, the timestamp stays the same, even this
+# program continues to send data in each 15 seconds. By this timestamp
+# the reader of this topic can determine which one had died.
+recTs = int(time.time())
 publish_interval = 15
 
 def calcAvg():
@@ -51,6 +57,8 @@ def resetPhase(phase):
 
 
 def publishPhase(phase):
+    global recTs
+
     if phase.count == 0:
         return
     now = int(time.time())
@@ -62,7 +70,7 @@ def publishPhase(phase):
         'voltage': round(phase.voltage  / phase.count,2),
         'pf': round(phase.pf  / phase.count,2),
         'total': round(phase.total  / phase.count,2),
-        'ts': now
+        'ts': recTs
     }
     client.publish(mqtt_broker.topic_prefix + "/phase/" + str(phase.phase) + "/elproduction",json.dumps(measurement), qos=0, retain=True)
     resetPhase(phase)
@@ -82,7 +90,7 @@ def getPower():
 
 
 def publishSum():
-    global prevpower, W15min, prevseconds
+    global prevpower, W15min, prevseconds, recTs
 
     power = getPower()
     now = int(time.time())
@@ -94,7 +102,7 @@ def publishSum():
             'phase': 'all',
             'W15min': round(W15min, 2),
             'seconds' : prevseconds,
-            'ts': now
+            'ts': recTs
         }
         client.publish(mqtt_broker.topic_prefix + "/phase/all/quarterhnet",json.dumps(qtotals), qos=0, retain=True)
         W15min = 0
@@ -107,7 +115,9 @@ def publishSum():
     W15min += power / 60
     all_power_avg.append(power)
 
-    if len(all_power_avg) > 8: # collect samples from 8 quarts = 2 minutes
+    # average is counted from 2 minutes = 8 * 15 sec.
+    # the oldest record is taken out, after inserting a new one.
+    if len(all_power_avg) > 8:
         all_power_avg.pop(0)
 
     totals = {
@@ -117,7 +127,7 @@ def publishSum():
         'poweravg': round(calcAvg(),2),
         'seconds'  : seconds,
         'W15min' : round(W15min,2),
-        'ts': now
+        'ts': recTs
     }
 
     prevpower = power
@@ -125,11 +135,12 @@ def publishSum():
 
 
 def processData(eldata):
-    global phases
+    global phases, recTs
     arr = eldata.topic.split("/")
     item = arr[4]
     
     phase = int(arr[3])
+    recTs = int(time.time())
     if item == "power":
         phases[phase].power += float(eldata.payload)
         phases[phase].count = phases[phase].count + 1
