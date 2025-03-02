@@ -49,6 +49,14 @@
         return false;
     }
 
+    function showFirmware(devid)
+    {
+        devtype = $('#T' + devid).val();
+        console.log('formid = ' + devid + ' type = ' + devtype);
+        window.open('otaupdater.html?dev=' + devid + '&type=' + devtype);
+        return false;
+    }
+
 
 
     function onConnect() {
@@ -115,12 +123,14 @@
                 console.log('style="color:' + btnColor + ';"');
                 $('#devices').append('<tr id="TR_' + obj.dev + '"><form id="F' + obj.dev + '"><td><input type="text" readonly id="D' + obj.dev + '" size=10 value="'+ obj.dev +
                                     '"/></td><td><input type="text" readonly id="T' + obj.dev + '" size=10 value="' + obj.type + 
-                                    '"/></td><td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button></form></td></tr>');
+                                    '"/></td><td><button id="F' + obj.dev + '" style="color:' + btnColor + ';" onClick=showDetails("' + obj.dev + '")>Details</button>' +
+                                    '<td><button id="B' + obj.dev + '" style="color:' + btnColor + ';" onClick=showFirmware("' + obj.dev + '")>Firmware</button></form></td></tr>');
                 $('#devices').append('<tr id="TRD_' + obj.dev + '"><td></td><td colspan="2" id="info' + obj.dev + '">No info available</td></tr>');
             }
             else
             {
                 $("#B" + obj.dev).css('color',btnColor);
+                $("#V" + obj.dev).css('color',btnColor);
             }
         }
     };

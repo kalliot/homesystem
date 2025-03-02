@@ -1,0 +1,127 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import time
+import json
+import paho.mqtt.client as mqtt 
+from queue import Queue
+import sys
+import glob
+import os
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+def pubFileSize(fname):
+    try:
+        size = os.path.getsize(fname)
+    except:
+        size = 0
+
+    infomsg = {
+        'id': 'filesize',
+        'name' : fname,
+        'size' : size
+    }
+    infotopic = mqtt_broker.topic_prefix + "/ota/filesize"
+    client.publish(infotopic,json.dumps(infomsg),qos=0, retain=False)
+
+
+def publishFiles(newest):
+    os.chdir("/home/pi/srv/ota")
+    thermostatfiles = glob.glob("thermostat*")
+    refrigeratorfiles = glob.glob("refrigerator*")
+    sensorsfiles = glob.glob("sensors*")
+    infomsg = {
+        'id': 'binaries',
+        'newest' : newest,
+        'thermostat' : thermostatfiles,
+        'sensors' : sensorsfiles,
+        'refrigerator' : refrigeratorfiles
+    }
+    
+    infotopic = mqtt_broker.topic_prefix + "/ota/files"
+    if (newest == ''):
+        print(datetime.utcnow(),"Ota files may have changed, refreshing")
+    else:
+        print(datetime.utcnow(),"Ota files have changed, at least", newest)    
+    client.publish(infotopic,json.dumps(infomsg),qos=0, retain=True)
+
+#{"id":"getfilesize", "file":"sensors_0.0.0.12"}
+
+def processData(indata):
+    id = indata['id']
+
+    if id == 'otafileschanged':
+        publishFiles(indata['name'])
+    if id == 'getfilesize':
+        pubFileSize(indata['file'])
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+
+    if (rc==0):
+        connected = True
+        publishFiles('')
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
+
+def on_publish(client, userdata,result):
+    pass
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client('otawatch') 
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+topics = [(mqtt_broker.topic_prefix + "/ota/fileschanged",0),
+          (mqtt_broker.topic_prefix + "/ota/getfilesize",0)]
+client.subscribe(topics)
+
+
+while True:
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        msg = json.loads(data)
+        processData(msg)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise
