@@ -12,11 +12,59 @@ import os
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
+simuSize = 10000
+simuRemaining = simuSize
+
+def pubSimuInfo(ver):
+    simuinfo = {
+        'dev' : 'simu',
+        'id'  : 'info',
+        'memfree': 200000,
+        'idfversion': 'python',
+        'progversion': ver
+    }
+    infotopic = mqtt_broker.topic_prefix + "/simulator/simu/info"
+    client.publish(infotopic,json.dumps(simuinfo),qos=0, retain=True)
+
+
+def pubSimuDevice():
+    simudevmsg = {
+        'dev' : 'simu',
+        'id'  : 'device',
+        'type': 'simulator',
+        'connected': 1
+    }
+    infotopic = mqtt_broker.topic_prefix + "/devices/simu"
+    client.publish(infotopic,json.dumps(simudevmsg),qos=0, retain=True)
+
+    simustats = {
+        'dev' : 'simu',
+        'id'  : 'statistics',
+        'connectctn': 1,
+        'disconnectcnt' : 0,
+        'sendcnt': 1,
+        'sensorerrors': 0,
+        'max_queued': 0,
+        'ts': int(time.time()),
+        'started': int(time.time()),
+        'rssi': -20
+    }
+    statstopic = mqtt_broker.topic_prefix + "/simulator/simu/statistics"
+    client.publish(statstopic,json.dumps(simustats),qos=0, retain=True)
+
+
+
 def pubFileSize(fname):
-    try:
-        size = os.path.getsize(fname)
-    except:
-        size = 0
+    global simuSize
+
+    if fname[0:4] == 'simu':
+        size = simuSize
+        simuRemaining = size
+    else:
+        try:
+            size = os.path.getsize(fname)
+        except:
+            size = 0
 
     infomsg = {
         'id': 'filesize',
@@ -26,18 +74,36 @@ def pubFileSize(fname):
     infotopic = mqtt_broker.topic_prefix + "/ota/filesize"
     client.publish(infotopic,json.dumps(infomsg),qos=0, retain=False)
 
+def getFiles(name, maxdays):
+    ret = []
+    files = glob.glob(name)
+    now = int(time.time())
+    for file in files:
+        status = os.stat(file)
+        days = int((now - int(status.st_ctime)) / 86400)
+        if days <= maxdays:
+            ret.append(file)
+        if days > (maxdays * 2):
+            os.remove(file)
+    return ret
+
 
 def publishFiles(newest):
     os.chdir("/home/pi/srv/ota")
-    thermostatfiles = glob.glob("thermostat*")
-    refrigeratorfiles = glob.glob("refrigerator*")
-    sensorsfiles = glob.glob("sensors*")
+    thermostatfiles   = getFiles("thermostat*", 100)
+    refrigeratorfiles = getFiles("refrigerator*", 100)
+    sensorsfiles      = getFiles("sensors*",100)
+    rgbfiles          = getFiles("rgb7segdisplay*",100)
+
+    simufiles = ['simu_0.0.0.1','simu_0.0.0.2','simu_0.0.0.3']
     infomsg = {
         'id': 'binaries',
         'newest' : newest,
         'thermostat' : thermostatfiles,
         'sensors' : sensorsfiles,
-        'refrigerator' : refrigeratorfiles
+        'refrigerator' : refrigeratorfiles,
+        'simulator'    : simufiles,
+        'rgb7segdisplay' : rgbfiles
     }
     
     infotopic = mqtt_broker.topic_prefix + "/ota/files"
@@ -46,6 +112,29 @@ def publishFiles(newest):
     else:
         print(datetime.utcnow(),"Ota files have changed, at least", newest)    
     client.publish(infotopic,json.dumps(infomsg),qos=0, retain=True)
+
+def pubSimuDownloadStatus():
+    global simuSize
+    simuRemaining = 1000
+
+    for i in range(15):
+        if simuRemaining > simuSize:
+            simuRemaining = 0
+        statusmsg = {
+            'dev': 'simu',
+            'id': 'otastatus',
+            'value' : simuRemaining,
+            'ts' : int(time.time()),
+            'err' : 'ESP_OK',
+        }
+        client.publish(mqtt_broker.topic_prefix + '/simulator/simu/otaupdate',json.dumps(statusmsg),qos=0, retain=False)
+        if simuRemaining == 0:
+            break
+        simuRemaining = simuRemaining + 1000
+        time.sleep(0.1)
+
+
+
 
 #{"id":"getfilesize", "file":"sensors_0.0.0.12"}
 
@@ -56,6 +145,9 @@ def processData(indata):
         publishFiles(indata['name'])
     if id == 'getfilesize':
         pubFileSize(indata['file'])
+    if id == 'otaupdate':
+        pubSimuDownloadStatus()
+        pubSimuInfo(indata['file'][5:])
 
 
 def on_message(client, userdata, message):
@@ -68,6 +160,8 @@ def on_connect(client, userdata, flags, rc):
     if (rc==0):
         connected = True
         publishFiles('')
+        pubSimuDevice()
+        pubSimuInfo('0.0.0.1')
     else:
         print(datetime.utcnow(),"connection failed, rc=",rc)
         connected = False
@@ -103,6 +197,7 @@ client.loop_start()
 
 
 topics = [(mqtt_broker.topic_prefix + "/ota/fileschanged",0),
+          (mqtt_broker.topic_prefix +"/simulator/simu/otaupdate",0),
           (mqtt_broker.topic_prefix + "/ota/getfilesize",0)]
 client.subscribe(topics)
 
