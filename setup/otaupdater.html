@@ -1,4 +1,11 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
+   <style>
+      .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+      .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+      .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+      .blanc {background-color: rgb(0, 0, 0); color: rgb(253, 253, 253)}
+   </style>   
+
   <head>
     <title id="myTitle">Firmware</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -73,7 +80,6 @@
               ',"file":"' + $('#upgrade').val() + '"}';
         topic = "home/kallio/" + myType + "/" + myDevice + "/otaupdate";
         console.log(topic, content);
-        $('.download').show();
         mqtt.send(topic, content, 0 , false);
         return;
     }
@@ -84,13 +90,13 @@
             return;
         compare = $(id).text();
         console.log(compare, newest);
-        newestVer = newest.substring(compare.length)
-        console.log(compare, newestVer);
+        newestVer = newest.substring(myType.length + 1)
+        console.log(compare, newestVer, compare.length);
         if (newest != '' && newestVer != compare)
-            color = '#ff4040';
+            color = 'rouge';
         else    
-            color = '#ffffff';
-        $(id).css('color',color);    
+            color = 'blanc';
+        $(id).attr("class", color);
     }
 
 
@@ -101,6 +107,10 @@
     
         const obj = JSON.parse(payload);
      
+        if (obj.id == "otaupdate")
+        {
+            $('.download').show();
+        }
         if (obj.id == "filesize")
         {
             console.log('filesize', obj.size);
@@ -126,9 +136,11 @@
                 selected = '';
                 if (file == obj.newest)
                 {
-                    selected = 'selected=selected'
+                    selected = 'selected=selected';
                 }
-                $('#upgrade').append('<option value="' + file + '"' + selected + '>' + file + '</option>');
+                content = '<option value="' + file + '"' + selected + '>' + file + '</option>';
+                console.log("adding", content);
+                $('#upgrade').append(content);
                 count++;
             }
             if (count) $('#updform').append('<button type="button" onClick="startupdate()">Start update</button>');
@@ -182,7 +194,7 @@
     <h1 id="heading">Firmware</h1>
     <div>
         <table>
-            <tr><td>Program version</td><td id="progver"></td></tr>
+            <tr><td>Program version</td><td id="progver" class="blanc"></td></tr>
             <tr><td>Free memory</td><td id="memfree"></td></tr>
             <tr><td>Idf version</td><td id="idfversion"></td></tr>
             <tr><td>Connect count</td><td id="connectcnt"></td><td>Disconnect count</td><td id="disconnectcnt"></td></tr>

@@ -1,4 +1,12 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
+
+  <style>
+      .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+      .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+      .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+      .blanc {background-color: rgb(0, 0, 0); color: rgb(253, 253, 253)}
+  </style>
+
   <head>
     <title>Thermostat setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -56,9 +64,11 @@
 
     function sendsetup()
     {
-        content = '{"dev":"' + myDevice +'", "id": "heatsetup"' + 
-              ',"target":' + $('#target').val() + 
-              ',"hiboost":' + $('#hiboost').val() + 
+        content = '{"dev":"' + myDevice +'", "id": "heatsetup"' +
+              ',"drop":' + $('#drop').val() +
+              ',"expensive":' + $('#expensive').val() +
+              ',"target":' + $('#target').val() +
+              ',"hiboost":' + $('#hiboost').val() +
               ',"lodeduct":' + $('#lodeduct').val() +
               ',"pwmlen":' + $('#pwmlen').val()+ '}';
 
@@ -172,7 +182,7 @@
     function timeredTemperature(id, temperature, color)
     {
         $(id).html(temperature);
-        $(id).css('color',color);
+        $(id).attr("class", color);
     }
 
     function onMessageArrived(message) {
@@ -193,10 +203,12 @@
         }
         if (obj.id == "heatsetup")
         {
-            $('#target').val(obj.target); 
-            $('#hiboost').val(obj.hiboost); 
-            $('#lodeduct').val(obj.lodeduct);    
-            $('#pwmlen').val(obj.pwmlen);    
+            $('#drop').val(obj.drop);
+            $('#expensive').val(obj.expensive);
+            $('#target').val(obj.target);
+            $('#hiboost').val(obj.hiboost);
+            $('#lodeduct').val(obj.lodeduct);
+            $('#pwmlen').val(obj.pwmlen);
         }
         if (obj.id == "tempsensors")
         {
@@ -233,20 +245,20 @@
                 targ = Number($('#currtarget').html());
                 temperature = Number(obj.value);
                 console.log('targ=',targ);
-                color = '#ffffff';
+                color = 'blanc';
 
                 if (temperature < (targ - temperatureHysteresis))
-                    color = '#6060ff';
+                    color = 'bleu';
                 if (temperature > (targ + temperatureHysteresis))
-                    color = '#ff4040';
-                $('#temperature').css('color', color);
+                    color = 'rouge';
+                $('#temperature').attr("class", color);
                 $('#temperature').html(obj.value);
                 console.log("got temperature",obj.value);
             }    
             else
             {
-                if (obj.err == 0) ncolor = '#ffffff';
-                else ncolor = '#ff4040'
+                if (obj.err == 0) ncolor = 'blanc';
+                else ncolor = 'rouge'
                 setTimeout(() => {timeredTemperature('#v'+ obj.sensor,obj.value, ncolor);},100);
             }
         }
@@ -254,12 +266,13 @@
         {   
             temperature = Number($('#temperature').html());
             targ = Number(obj.value);
-            color = '#ffffff';
+            color = 'blanc';
             if (temperature < (targ - temperatureHysteresis))
-                color = '#6060ff';
+                color = 'bleu';
             if (temperature > (targ + temperatureHysteresis))
-                color = '#ff4040';
-            $('#temperature').css('color',color);
+                color = 'rouge';
+            //$('#temperature').css('color',color);
+            $('#temperature').attr("class", color);
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
         }
@@ -338,6 +351,17 @@
                             id="target" 
                             size=5/>
                 </td>
+            <tr>
+                <td>
+                <label for="target">Drop </label>
+                <input type="text"
+                            id="drop"
+                            size=5/>
+                C, when price is over</td>
+                    <td><input type="text"
+                                id="expensive"
+                                size=5/>
+                    </td>
 
             <tr><td><label for="hiboost">Boost when price is low </label></td>
                 <td><input type="text" 

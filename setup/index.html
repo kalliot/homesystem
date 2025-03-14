@@ -1,4 +1,11 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
+
+<style>
+    .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+    .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+    .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+</style>
+
   <head>
     <title>Setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -186,18 +193,17 @@
             {
                 case 0:  
                     $('#relaystate').html(obj.state ? "On" : "Off");
-                    $("#relaystate").css("background", obj.state ? "red" : "blue");
+                    $("#relaystate").attr("class", obj.state ? "rouge" : "bleu");
                 break;
 
                 case 2:  
                     $('#stockheatstate').html(obj.state ? "On" : "Off");
-                    $("#stockheatstate").css("background", obj.state ? "red" : "blue");
+                    $("#stockheatstate").attr("class", obj.state ? "rouge" : "bleu");
                 break;
 
                 case 3:
                     $('#burnerstate').html(obj.state ? "Preheat" : "Off");
-                    $("#burnerstate").css("background", obj.state ? "yellow" : "blue");
-                    $("#burnerstate").css("color", obj.state ? "black" : "white");
+                    $("#burnerstate").attr("class", obj.state ? "jaune" : "bleu");
                 break;
                 
                 default:
@@ -260,8 +266,7 @@
         if (obj.id == "state" && obj.dev=="5bcae4" && obj.sensor == 33)
         {
             $('#burnerstate').html(obj.value ? "On" : "Off");
-            $("#burnerstate").css("background", obj.value ? "red" : "blue");
-            $("#burnerstate").css("color", "white");
+            $("#burnerstate").attr("class", obj.state ? "rouge" : "bleu");
         }
         if (obj.id == "solarerror")
         {
