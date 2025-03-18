@@ -1,0 +1,147 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import time
+import json
+import paho.mqtt.client as mqtt 
+import sys
+from queue import Queue
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+totalcents = 0
+daycents = 0
+
+class Price:
+    def __init__(self):
+        self.price = 0
+        self.transferprice = 0
+        self.buycommission = 0
+        self.ts = int(time.time())
+
+    def update(self, price, ts):
+        self.price = price
+        self.ts = ts
+
+    def setup(self, transfer, commission):    
+        self.buycommission = commission
+        self.transferprice = transfer 
+
+
+class Power:
+    def __init__(self):
+        self.level = 0
+        self.ts = int(time.time())
+        self.power = 0
+
+    def update(self, level, ts):
+        self.level = level
+        self.ts = ts
+        self.power = level / 29 * 600 # in watts
+
+price = Price()
+power = Power()
+
+
+def processData(indata):
+    global totalcents, daycents
+
+    id = indata['id']
+
+    if id == 'heatsetup':
+        print(datetime.utcnow(),"received transferprice and commission",indata['eltransferprice'], indata['elprice'])
+        price.setup(float(indata['eltransferprice']), float(indata['elprice']))
+
+    elif id == 'thermostat':
+        print(datetime.utcnow(),"received level",indata['value'])
+        newTs = int(indata['ts'])
+        seconds = newTs - power.ts
+        cents = seconds / 3600 * (power.power / 1000) * (price.price + price.transferprice + price.buycommission)
+        power.update(int(indata['value']), int(indata['ts']))
+        totalcents += cents
+        print(seconds,"Power is", power.power, "Cents for current hour, so far", totalcents)
+
+
+    elif id == 'elprice':
+        print(datetime.utcnow(),"received price",indata['price'])
+        newTs = int(indata['ts'])
+        seconds = newTs - power.ts # seconds since last level change
+        cents = seconds / 3600 * (power.power / 1000) * (price.price + price.transferprice + price.buycommission) # power is now in kilowatts
+        price.update(float(indata['price']), newTs)
+        power.ts = newTs
+        daycents += totalcents
+        print("---> cents total for previous hour", totalcents, "and for day", daycents)
+        tm = time.localtime(newTs)
+        if (tm.tm_hour == 0):
+            daycents = 0
+        totalcents = 0
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message.payload)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+
+    if (rc==0):
+        connected = True
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+        connected = False
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected")
+    if rc != 7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.utcnow(),"reconnect failed, waiting...")
+            time.sleep(30)
+    else:
+        time.sleep(1)
+
+
+def on_publish(client, userdata,result):
+    pass
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client('calculator') 
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+topics = [(mqtt_broker.topic_prefix + "/thermostat/+/parameters/level",0),
+          (mqtt_broker.topic_prefix + "/heating/setup",0),
+          (mqtt_broker.topic_prefix +"/elprice/current",0)]
+client.subscribe(topics)
+
+
+while True:
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        msg = json.loads(data)
+        processData(msg)
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise
