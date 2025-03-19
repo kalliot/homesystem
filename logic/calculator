@@ -13,7 +13,7 @@ from setup import *
 totalcents = 0
 daycents = 0
 
-class Price:
+class ElectricityPrice:
     def __init__(self):
         self.price = 0
         self.transferprice = 0
@@ -28,20 +28,43 @@ class Price:
         self.buycommission = commission
         self.transferprice = transfer 
 
+    def buyPrice(self):
+        return self.price + self.buycommission + self.transferprice
 
-class Power:
-    def __init__(self):
-        self.level = 0
+
+class Consumer:
+    def __init__(self, name, levels, power):
+        self.name = name
+        self.levels = levels
+        self.power = power
+        self.hourlyCents = 0
+        self.dailyCents = 0
+        self.currentLevel = 0
         self.ts = int(time.time())
-        self.power = 0
+        self.currentPower = 0
 
-    def update(self, level, ts):
-        self.level = level
+    def update(self, level, ts, price):
+        seconds = ts - self.ts
+        self.currentLevel = level
+        self.hourlyCents += seconds / 3600 * self.currentPower / 1000 * price
         self.ts = ts
-        self.power = level / 29 * 600 # in watts
+        self.currentPower = level / self.levels * self.power # in watts
 
-price = Price()
-power = Power()
+    def hourChanged(self,ts, price):
+        seconds = ts - self.ts
+        self.hourlyCents += seconds / 3600 * self.currentPower / 1000 * price
+        self.dailyCents += self.hourlyCents
+
+    def reset(self, dayChanged):
+        if dayChanged:
+            self.dailyCents = 0
+        self.hourlyCents = 0
+
+
+
+elPrice = ElectricityPrice()
+thermostat  = Consumer("thermostat", 29, 600)
+stockheater = Consumer("stockheat", 1, 2000)
 
 
 def processData(indata):
@@ -51,31 +74,44 @@ def processData(indata):
 
     if id == 'heatsetup':
         print(datetime.utcnow(),"received transferprice and commission",indata['eltransferprice'], indata['elprice'])
-        price.setup(float(indata['eltransferprice']), float(indata['elprice']))
+        elPrice.setup(float(indata['eltransferprice']), float(indata['elprice']))
 
     elif id == 'thermostat':
-        print(datetime.utcnow(),"received level",indata['value'])
+        print(datetime.utcnow(),"thermostat received level",indata['value'])
         newTs = int(indata['ts'])
-        seconds = newTs - power.ts
-        cents = seconds / 3600 * (power.power / 1000) * (price.price + price.transferprice + price.buycommission)
-        power.update(int(indata['value']), int(indata['ts']))
-        totalcents += cents
-        print(seconds,"Power is", power.power, "Cents for current hour, so far", totalcents)
+        thermostat.update(int(indata['value']), newTs, elPrice.buyPrice())
+        print(datetime.utcnow(),"Power is", thermostat.currentPower, "Thermostat cents for current hour, so far", thermostat.hourlyCents)
+
+    elif id == 'relay':
+        contact = int(indata['contact'])
+        if contact == 2:
+            state = indata['state']
+            level = 0
+            if state:
+                level = 1
+            print(datetime.utcnow(),"stockheater received level",level)
+            newTs = int(indata['ts'])
+            stockheater.update(level, newTs, elPrice.buyPrice())
+            print(datetime.utcnow(),"Power is", stockheater.currentPower, "Stockheater cents for current hour, so far", stockheater.hourlyCents)
 
 
     elif id == 'elprice':
         print(datetime.utcnow(),"received price",indata['price'])
         newTs = int(indata['ts'])
-        seconds = newTs - power.ts # seconds since last level change
-        cents = seconds / 3600 * (power.power / 1000) * (price.price + price.transferprice + price.buycommission) # power is now in kilowatts
-        price.update(float(indata['price']), newTs)
-        power.ts = newTs
-        daycents += totalcents
-        print("---> cents total for previous hour", totalcents, "and for day", daycents)
+        thermostat.hourChanged(newTs, elPrice.buyPrice())
+        stockheater.hourChanged(newTs, elPrice.buyPrice())
+        # send hourdata to mqtt
+        print("---> Thermostat cents total for previous hour", thermostat.hourlyCents, "and for day", thermostat.dailyCents)
+        print("---> Stockheater cents total for previous hour", stockheater.hourlyCents, "and for day", stockheater.dailyCents)
+        elPrice.update(float(indata['price']), newTs)
+
         tm = time.localtime(newTs)
-        if (tm.tm_hour == 0):
-            daycents = 0
-        totalcents = 0
+        dayChanged = (tm.tm_hour == 0)
+        if dayChanged:
+            # send dailydata to mqtt
+            pass
+        thermostat.reset(dayChanged)
+        stockheater.reset(dayChanged)
 
 
 def on_message(client, userdata, message):
@@ -123,7 +159,8 @@ client.loop_start()
 
 topics = [(mqtt_broker.topic_prefix + "/thermostat/+/parameters/level",0),
           (mqtt_broker.topic_prefix + "/heating/setup",0),
-          (mqtt_broker.topic_prefix +"/elprice/current",0)]
+          (mqtt_broker.topic_prefix + "/relay/+/shelly1/state",0),
+          (mqtt_broker.topic_prefix + "/elprice/current",0)]
 client.subscribe(topics)
 
 
