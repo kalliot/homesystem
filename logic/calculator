@@ -10,33 +10,44 @@ from queue import Queue
 sys.path.insert(1, '/home/pi/config')
 from setup import *
 
-totalcents = 0
-daycents = 0
-
-class ElectricityPrice:
+class Pricing:
     def __init__(self):
         self.price = 0
+        self.taxfreeprice = 0
         self.transferprice = 0
         self.buycommission = 0
+        self.sellcommission = 0
+        self.oilprice = 0 # in euros
         self.ts = int(time.time())
 
-    def update(self, price, ts):
+    def update(self, price, taxfree, ts):
         self.price = price
+        self.taxfreeprice = taxfree
         self.ts = ts
 
-    def setup(self, transfer, commission):    
+    def setup(self, transfer, commission, sellcommission, oilprice):    
         self.buycommission = commission
-        self.transferprice = transfer 
+        self.transferprice = transfer
+        self.oilprice = oilprice
+        self.sellcommission = sellcommission
 
     def buyPrice(self):
         return self.price + self.buycommission + self.transferprice
 
+    def sellPrice(self):
+        return self.taxfreeprice - self.sellcommission
+
+
+    def oilPrice(self):
+        return self.oilprice * 10.8 # convert to cents per kwh and consider efficiency
 
 class Consumer:
     def __init__(self, name, levels, power):
         self.name = name
         self.levels = levels
         self.power = power
+        self.hourlyWatts = 0
+        self.dailyWatts = 0
         self.hourlyCents = 0
         self.dailyCents = 0
         self.currentLevel = 0
@@ -46,64 +57,89 @@ class Consumer:
     def update(self, level, ts, price):
         seconds = ts - self.ts
         self.currentLevel = level
-        self.hourlyCents += seconds / 3600 * self.currentPower / 1000 * price
+        self.hourlyWatts += seconds / 3600 * self.currentPower
+        self.hourlyCents += self.hourlyWatts / 1000 * price
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
 
     def hourChanged(self,ts, price):
         seconds = ts - self.ts
-        self.hourlyCents += seconds / 3600 * self.currentPower / 1000 * price
+        self.hourlyWatts += seconds / 3600 * self.currentPower
+        self.hourlyCents += self.hourlyWatts / 1000 * price
         self.dailyCents += self.hourlyCents
+        self.dailyWatts += self.hourlyWatts
 
     def reset(self, dayChanged):
         if dayChanged:
             self.dailyCents = 0
+            self.dailyWatts = 0
         self.hourlyCents = 0
+        self.hourlyWatts = 0
 
 
 
-elPrice = ElectricityPrice()
+pricing = Pricing()
 thermostat  = Consumer("thermostat", 29, 600)
-stockheater = Consumer("stockheat", 1, 2000)
+stockheater = Consumer("stockheat", 1, 4000)
+solheater   = Consumer("solheat",1, 2000)
+burner      = Consumer("burner", 1,  20800) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
 
 
 def processData(indata):
-    global totalcents, daycents
-
     id = indata['id']
 
     if id == 'heatsetup':
-        print(datetime.utcnow(),"received transferprice and commission",indata['eltransferprice'], indata['elprice'])
-        elPrice.setup(float(indata['eltransferprice']), float(indata['elprice']))
+        print(datetime.utcnow(),"received prices",indata['eltransferprice'], indata['elprice'],"heatoil",indata['heatoilprice'])
+        pricing.setup(float(indata['eltransferprice']), float(indata['elprice']), float(indata['elselcommission']), float(indata['heatoilprice']))
 
     elif id == 'thermostat':
         print(datetime.utcnow(),"thermostat received level",indata['value'])
         newTs = int(indata['ts'])
-        thermostat.update(int(indata['value']), newTs, elPrice.buyPrice())
-        print(datetime.utcnow(),"Power is", thermostat.currentPower, "Thermostat cents for current hour, so far", thermostat.hourlyCents)
+        thermostat.update(int(indata['value']), newTs, pricing.buyPrice())
+        print(datetime.utcnow(),"Power is", thermostat.currentPower, "Thermostat cents for current hour, so far", thermostat.hourlyCents, ",watts", thermostat.hourlyWatts)
+
+    elif id == 'state':
+        if indata['sensor'] == 33:
+            print(datetime.utcnow(),"burner received level",indata['value']) # check, is this boolean or 0/1
+            newTs = int(indata['ts'])
+            burner.update(int(indata['value']), newTs, pricing.oilPrice())
+            print(datetime.utcnow(),"Power is", burner.currentPower, "Burner cents for current hour, so far", burner.hourlyCents, ",watts", burner.hourlyWatts)
 
     elif id == 'relay':
         contact = int(indata['contact'])
-        if contact == 2:
+        newTs = int(indata['ts'])
+        if contact == 0: # solar energy heating
+            state = indata['state']
+            level = 0
+            if state:
+                level = 1
+            print(datetime.utcnow(),"solar received level",level)
+            solheater.update(level, newTs, pricing.buyPrice() - pricing.sellPrice()) # solheater starts only when there is enough solar energy
+            
+
+        elif contact == 2: # stock electricity heating
             state = indata['state']
             level = 0
             if state:
                 level = 1
             print(datetime.utcnow(),"stockheater received level",level)
-            newTs = int(indata['ts'])
-            stockheater.update(level, newTs, elPrice.buyPrice())
-            print(datetime.utcnow(),"Power is", stockheater.currentPower, "Stockheater cents for current hour, so far", stockheater.hourlyCents)
+            stockheater.update(level, newTs, pricing.buyPrice())
+            print(datetime.utcnow(),"Power is", stockheater.currentPower, "Stockheater cents for current hour, so far", stockheater.hourlyCents,",watts", stockheater.hourlyWatts)
 
 
     elif id == 'elprice':
         print(datetime.utcnow(),"received price",indata['price'])
         newTs = int(indata['ts'])
-        thermostat.hourChanged(newTs, elPrice.buyPrice())
-        stockheater.hourChanged(newTs, elPrice.buyPrice())
+        thermostat.hourChanged(newTs, pricing.buyPrice())
+        stockheater.hourChanged(newTs, pricing.buyPrice())
+        burner.hourChanged(newTs, pricing.oilPrice())
+        solheater.hourChanged(newTs, pricing.buyPrice() - pricing.sellPrice()) # solheater starts only when there is enough solar energy
         # send hourdata to mqtt
-        print("---> Thermostat cents total for previous hour", thermostat.hourlyCents, "and for day", thermostat.dailyCents)
-        print("---> Stockheater cents total for previous hour", stockheater.hourlyCents, "and for day", stockheater.dailyCents)
-        elPrice.update(float(indata['price']), newTs)
+        print(datetime.utcnow(),"Thermostat cents total for prev hour", thermostat.hourlyCents, ",day", thermostat.dailyCents)
+        print(datetime.utcnow(),"Stockheater cents total for pre hour", stockheater.hourlyCents, ",day", stockheater.dailyCents)
+        print(datetime.utcnow(),"Solar heater cents total for pre hour", solheater.hourlyCents, ",day", solheater.dailyCents)
+        print(datetime.utcnow(),"Boiler cents total for pre hour", burner.hourlyCents, ",day", burner.dailyCents)
+        pricing.update(float(indata['price']), float(indata['notax']), newTs)
 
         tm = time.localtime(newTs)
         dayChanged = (tm.tm_hour == 0)
@@ -112,7 +148,8 @@ def processData(indata):
             pass
         thermostat.reset(dayChanged)
         stockheater.reset(dayChanged)
-
+        burner.reset(dayChanged)
+        solheater.reset(dayChanged)
 
 def on_message(client, userdata, message):
     msgqueue.put(message.payload)
@@ -159,6 +196,7 @@ client.loop_start()
 
 topics = [(mqtt_broker.topic_prefix + "/thermostat/+/parameters/level",0),
           (mqtt_broker.topic_prefix + "/heating/setup",0),
+          (mqtt_broker.topic_prefix + "/sensors/5bcae4/parameters/state/#",0),
           (mqtt_broker.topic_prefix + "/relay/+/shelly1/state",0),
           (mqtt_broker.topic_prefix + "/elprice/current",0)]
 client.subscribe(topics)
