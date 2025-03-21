@@ -266,7 +266,7 @@
         if (obj.id == "state" && obj.dev=="5bcae4" && obj.sensor == 33)
         {
             $('#burnerstate').html(obj.value ? "On" : "Off");
-            $("#burnerstate").attr("class", obj.state ? "rouge" : "bleu");
+            $("#burnerstate").attr("class", obj.value ? "rouge" : "bleu");
         }
         if (obj.id == "solarerror")
         {

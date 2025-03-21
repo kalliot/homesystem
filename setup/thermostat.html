@@ -4,7 +4,7 @@
       .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
       .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
       .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
-      .blanc {background-color: rgb(0, 0, 0); color: rgb(253, 253, 253)}
+      .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
   </style>
 
   <head>
@@ -158,6 +158,7 @@
         // Connection succeeded; subscribe to our topic
         console.log("connected");
         mqtt.subscribe("home/kallio/devices/" + myDevice , {qos: 0});
+        mqtt.subscribe("home/kallio/elprice/current", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/setup/#", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/parameters/#", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/tempsensors", {qos: 0});
@@ -191,6 +192,30 @@
         var payload = message.payloadString;
     
         const obj = JSON.parse(payload);
+
+        if (obj.id == "elprice")
+        {
+            color = 'blanc';
+            if (obj.price > $('#expensive').val())
+                color = 'jaune';
+            $('#droplabel').attr("class", color);
+
+            if (obj.pricestate == "high")
+            {
+                $('#hiboost').attr("class", "jaune");
+                $('#lodeduct').attr("class", "blanc");
+            }
+            else if (obj.pricestate == "low")
+            {
+                $('#hiboost').attr("class", "blanc");
+                $('#lodeduct').attr("class", "jaune");
+            }
+            else if (obj.pricestate == "normal")
+            {
+                $('#hiboost').attr("class", "blanc");
+                $('#lodeduct').attr("class", "blanc");
+            }
+        }
 
         if (obj.dev != myDevice) return;
         if (obj.id == "pidsetup")
@@ -271,7 +296,6 @@
                 color = 'bleu';
             if (temperature > (targ + temperatureHysteresis))
                 color = 'rouge';
-            //$('#temperature').css('color',color);
             $('#temperature').attr("class", color);
             $('#currtarget').html(obj.value);
             console.log("got target temperature",obj.value);
@@ -353,7 +377,7 @@
                 </td>
             <tr>
                 <td>
-                <label for="target">Drop </label>
+                <label for="target" id="droplabel">Drop </label>
                 <input type="text"
                             id="drop"
                             size=5/>
@@ -363,13 +387,13 @@
                                 size=5/>
                     </td>
 
-            <tr><td><label for="hiboost">Boost when price is low </label></td>
+            <tr><td><label for="hiboost" id="hiboost">Boost when price is low </label></td>
                 <td><input type="text" 
                             id="hiboost" 
                             size=5/>
             </td>
             <tr></tr>
-            <tr><td><label for="lodeduct">Decrease when price is high</label></td>
+            <tr><td><label for="lodeduct" id="lodeduct">Decrease when price is high</label></td>
                 <td><input type="text" 
                             id="lodeduct" 
                             size=5/>
