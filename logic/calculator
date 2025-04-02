@@ -37,7 +37,10 @@ class SolarNetto:
         self.value = 0
         self.sampleCnt = 0
 
-
+# Solar production is read from solis inverters daily variable
+# Solis resets this when day changes and cumulates it while the
+# day goes on and sun is shining. Update just compares the new
+# value to previous.
 class SolarProduction:
     def __init__(self):
         self.hourlyKw = 0
@@ -53,11 +56,10 @@ class SolarProduction:
 
     def hourChanged(self,ts, reset):
         if reset:
-            print(datetime.utcnow(), "solar production in prev hour was", round(self.hourlyKw * 1000),"watts.")
+            print(datetime.utcnow(), "solis reported solar production in prev hour was", round(self.hourlyKw * 1000),"watts.")
             self.hourlyKw = 0
         else:
             self.ts = ts
-
 
     def reset(self):
         self.hourlyKw = 0
@@ -91,13 +93,19 @@ class Pricing:
         return self.price + self.buycommission + self.transferprice
 
     def sellPrice(self):
-        return self.taxfreeprice - self.sellcommission
+        ret = self.taxfreeprice - self.sellcommission
+        if ret < 0:
+            ret = 0
+        return ret
+
+    def surplusPrice(self):
+        return self.buyPrice() - self.sellPrice()
 
     def oilPrice(self):
         return self.oilprice * 10.8 # convert to cents per kwh and consider efficiency
 
 class Consumer:
-    def __init__(self, name, levels, power):
+    def __init__(self, name, levels, power, priceFunc):
         self.name = name
         self.levels = levels
         self.power = power
@@ -108,17 +116,27 @@ class Consumer:
         self.currentLevel = 0
         self.ts = int(time.time())
         self.currentPower = 0
+        self.priceFunc = priceFunc
 
-    def update(self, level, ts, price):
+    def update(self, level, ts):
+        minsaveinterval = 300 # if level is changed, save anyways
         seconds = ts - self.ts
+
         if seconds < 0: # in start this may become negative
+            self.currentLevel = level
+            self.ts = ts
             seconds = 0
+            return
+
+        if seconds < minsaveinterval and level == self.currentLevel:
+            return
+
         self.currentLevel = level
         self.hourlyWatts += seconds / 3600 * self.currentPower
-        self.hourlyCents = self.hourlyWatts / 1000 * price
+        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
-        print(datetime.utcnow(),"Power is", self.currentPower, self.name, "cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
+        print(datetime.utcnow(),"Power is", round(self.currentPower), self.name, "cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
 
 
     def publishHourChange(self, ts):
@@ -146,10 +164,12 @@ class Consumer:
         #client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
-    def hourChanged(self,ts, price):
+    def hourChanged(self,ts):
         seconds = ts - self.ts
+        if seconds < 0:
+            seconds = 0
         self.hourlyWatts += seconds / 3600 * self.currentPower
-        self.hourlyCents = self.hourlyWatts / 1000 * price
+        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
         self.dailyCents += self.hourlyCents
         self.dailyWatts += self.hourlyWatts
         print(datetime.utcnow(), self.name, round(self.hourlyWatts,1), "/", round(self.dailyWatts,1),"Watts. Cents tot prev hour =", round(self.hourlyCents,2), ",day", round(self.dailyCents,2))
@@ -162,42 +182,102 @@ class Consumer:
         self.hourlyWatts = 0
         self.ts = int(time.time()) # restart hourly second counting.
 
+class Consumers():
+    def __init__(self, consumer):
+        self.items = consumer
+
+    def hourChanged(self, ts):
+        for consumer in self.items:
+            consumer.hourChanged(ts)
+
+    def reset(self, dayChanged):
+        for consumer in self.items:
+            consumer.reset(dayChanged)
+
+    def publishHourChange(self, ts):
+        for consumer in self.items:
+            consumer.publishHourChange(ts)
+
+    def publishDayChange(self, ts):
+        for consumer in self.items:
+            consumer.publishDayChange(ts)
+
+    def hourlyWatts(self):
+        ret = 0
+        for consumer in self.items:
+            ret += consumer.hourlyWatts
+        return ret
+
+    def dailyWatts(self):
+        ret = 0
+        for consumer in self.items:
+            ret += consumer.dailyWatts
+        return ret
+
+    def hourlyCents(self):
+        ret = 0
+        for consumer in self.items:
+            ret += consumer.hourlyCents
+        return ret
+
+    def dailyCents(self):
+        ret = 0
+        for consumer in self.items:
+            ret += consumer.dailyCents
+        return ret
 
 pricing = Pricing()
-thermostat  = Consumer("thermostat", 29, 600)
-stockheater = Consumer("stockheat", 1, 4000)
-solheater   = Consumer("solheat",1, 2000)
-storefridge = Consumer("sfridge",1, 80)
-burner      = Consumer("burner", 1,  20800) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
+thermostat  = Consumer("thermostat",   29,   600, pricing.buyPrice)
+stockheater = Consumer("stockheat",     1,  4000, pricing.buyPrice)
+solheater   = Consumer("solheat",       1,  2000, pricing.surplusPrice)
+storefridge = Consumer("sfridge",       1,    80, pricing.buyPrice)
+heatpump    = Consumer("heatpump",    100,  2000, pricing.buyPrice)
+burner      = Consumer("burner",        1, 20800, pricing.oilPrice) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
+
 solar       = SolarProduction()
-solarNetto   = SolarNetto()
+solarNetto  = SolarNetto()
+
+consumers = Consumers([thermostat,
+                       stockheater,
+                       solheater,
+                       storefridge,
+                       heatpump,
+                       burner])
 
 
-def processData(indata):
+def processData(mqttdata):
+    arr = mqttdata.topic.split("/")
+    indata = json.loads(mqttdata.payload)
+    item = arr[1]
+
+    # bosch heatpump
+    if item == "boiler_data":
+        heatpump.update(int(indata['hpcompspd']), int(time.time()))
+        return
+
     id = indata['id']
-
     if id == 'heatsetup':
         print(datetime.utcnow(),"received prices",indata['eltransferprice'], indata['elprice'],"heatoil",indata['heatoilprice'])
         pricing.setup(float(indata['eltransferprice']), float(indata['elprice']), float(indata['elselcommission']), float(indata['heatoilprice']))
 
     elif id == 'thermostat':
         newTs = int(indata['ts'])
-        thermostat.update(int(indata['value']), newTs, pricing.buyPrice())
+        thermostat.update(int(indata['value']), newTs)
 
     elif id == 'cooler':
         newTs = int(indata['ts'])
-        storefridge.update(int(indata['value']), newTs, pricing.buyPrice())
+        storefridge.update(int(indata['value']), newTs)
 
     elif id == 'state':
         if indata['sensor'] == 33:
             newTs = int(indata['ts'])
-            burner.update(int(indata['value']), newTs, pricing.oilPrice())
+            burner.update(int(indata['value']), newTs)
 
     # handle devices which dropped out.
     elif id == 'device' and indata['connected'] == 0:
         newTs = int(time.time()) # data does not have a timestamp
         if indata['type'] == 'thermostat':
-            thermostat.update(0, newTs, pricing.buyPrice())
+            thermostat.update(0, newTs)
 
     elif id == 'solarpower':
         solar.update(indata['energy_today'])
@@ -210,7 +290,7 @@ def processData(indata):
             level = 0
             if state:
                 level = 1
-            solheater.update(level, newTs, pricing.buyPrice() - pricing.sellPrice()) # solheater starts only when there is enough solar energy
+            solheater.update(level, newTs) # solheater starts only when there is enough solar energy
             
 
         elif contact == 2: # stock electricity heating
@@ -218,7 +298,7 @@ def processData(indata):
             level = 0
             if state:
                 level = 1
-            stockheater.update(level, newTs, pricing.buyPrice())
+            stockheater.update(level, newTs)
 
     elif id == 'power15min':
         newTs = int(indata['ts'])
@@ -236,44 +316,27 @@ def processData(indata):
                 print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
             solar.hourChanged(newTs, True)
 
+    # elprice/current topic changes just after the hour has been changed.
+    # this triggers many calculations and printing/topic updates.
     elif id == 'elprice':
-        print(datetime.utcnow(),"The calculations are done with price", pricing.buyPrice())
+        print(datetime.utcnow(),"The calculations are done with buyprice", pricing.buyPrice(), "and sellprice", pricing.sellPrice())
         newTs = int(indata['ts'])
-        thermostat.hourChanged(newTs, pricing.buyPrice())
-        stockheater.hourChanged(newTs, pricing.buyPrice())
-        storefridge.hourChanged(newTs, pricing.buyPrice())
-        burner.hourChanged(newTs, pricing.oilPrice())
-        solheater.hourChanged(newTs, pricing.buyPrice() - pricing.sellPrice()) # solheater starts only when there is enough solar energy
-
+        consumers.hourChanged(newTs)
         solar.hourChanged(newTs, False)
-
-        thermostat.publishHourChange(newTs)
-        stockheater.publishHourChange(newTs)
-        storefridge.publishHourChange(newTs)
-        burner.publishHourChange(newTs)
-        solheater.publishHourChange(newTs)
-
+        consumers.publishHourChange(newTs)
         pricing.update(float(indata['price']), float(indata['notax']), newTs)
 
         tm = time.localtime(newTs)
         dayChanged = (tm.tm_hour == 0)
         if dayChanged:
-            thermostat.publishDayChange(newTs)
-            stockheater.publishDayChange(newTs)
-            storefridge.publishDayChange(newTs)
-            burner.publishDayChange(newTs)
-            solheater.publishDayChange(newTs)
+            consumers.publishDayChange(newTs)
             solar.reset()
 
-        thermostat.reset(dayChanged)
-        stockheater.reset(dayChanged)
-        burner.reset(dayChanged)
-        solheater.reset(dayChanged)
-        storefridge.reset(dayChanged)
+        consumers.reset(dayChanged)
         print("---------------------------------------------------------")
 
 def on_message(client, userdata, message):
-    msgqueue.put(message.payload)
+    msgqueue.put(message)
 
 
 def on_connect(client, userdata, flags, rc):
@@ -323,6 +386,7 @@ topics = [(mqtt_broker.topic_prefix + "/thermostat/+/parameters/level",0),
           (mqtt_broker.topic_prefix + "/relay/+/shelly1/state",0),
           (mqtt_broker.topic_prefix + "/phase/all/quarterhnet",0),
           (mqtt_broker.topic_prefix + "/devices/#",0),
+          ("ems-esp/boiler_data",0),
           (mqtt_broker.topic_prefix + "/elprice/current",0)]
 client.subscribe(topics)
 
@@ -332,8 +396,7 @@ while True:
         data = msgqueue.get(block=True)
         if data is None:
             continue
-        msg = json.loads(data)
-        processData(msg)
+        processData(data)
 
     except KeyboardInterrupt:
         client.disconnect()
