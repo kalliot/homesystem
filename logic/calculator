@@ -28,15 +28,15 @@ class ElProduction:
             print(datetime.utcnow(),"Warning, not all quarterhour samples received!")
         ret = int(self.value / self.sampleCnt)
         self.dailyWatts += ret
-        self.value = 0
-        self.sampleCnt = 0
         return ret
 
-    def reset(self):
+    def reset(self, dayChanged):
         self.ts = int(time.time())
-        self.dailyWatts = 0
         self.value = 0
         self.sampleCnt = 0
+
+        if dayChanged:
+            self.dailyWatts = 0
 
 # Solar production is read from solis inverters daily variable
 # Solis resets this when day changes and cumulates it while the
@@ -69,8 +69,10 @@ class SolarProduction:
 
 class Pricing:
     def __init__(self):
-        self.price = 0
-        self.taxfreeprice = 0
+        self.pendingPrice = 0
+        self.pendingTaxFreePrice = 0
+        self.price = -100
+        self.taxFreePrice = 0
         self.transferprice = 0
         self.buycommission = 0
         self.sellcommission = 0
@@ -78,9 +80,17 @@ class Pricing:
         self.ts = int(time.time())
 
     def update(self, price, taxfree, ts):
-        self.price = price
-        self.taxfreeprice = taxfree
+        self.pendingPrice = price
+        self.pendingTaxFreePrice = taxfree
+        if self.price == -100:
+            self.price = price
+            self.taxFreePrice = taxfree
         self.ts = ts
+
+    def commitPrice(self,ts):
+        self.ts = ts
+        self.price = self.pendingPrice
+        self.taxFreePrice = self.pendingTaxFreePrice
 
     def setup(self, transfer, commission, sellcommission, oilprice):    
         self.buycommission = commission
@@ -92,7 +102,7 @@ class Pricing:
         return self.price + self.buycommission + self.transferprice
 
     def sellPrice(self):
-        ret = self.taxfreeprice - self.sellcommission
+        ret = self.taxFreePrice - self.sellcommission
         if ret < 0:
             ret = 0
         return ret
@@ -136,8 +146,14 @@ class Consumer:
         self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
-        print(datetime.utcnow(),"Power is", round(self.currentPower), self.name, "cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
+        print(datetime.utcnow(),self.name, "Power is", round(self.currentPower), ". Cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
 
+    def setHourlyPower(self, watts, ts):
+        self.hourlyWatts = watts
+        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
+        self.dailyCents += self.hourlyCents
+        self.dailyWatts += self.hourlyWatts
+        self.ts = ts
 
     def publishHourChange(self, ts):
         typ = "el"
@@ -184,9 +200,25 @@ class Consumer:
         self.ts = int(time.time()) # restart hourly second counting.
 
 
+
 class Consumers():
     def __init__(self, consumer):
         self.items = consumer
+        self.solarW = 0
+        self.soldW = 0
+        self.creditedW = 0
+        self.dailySolarW = 0
+        self.dailySoldW = 0
+        self.dailyCreditedW = 0
+
+    def totals(self, solarKw, soldW, creditedW):
+        self.solarW = round(1000 * solarKw)
+        self.soldW = soldW
+        self.creditedW = creditedW
+
+        self.dailySolarW += round(1000 * solarKw)
+        self.dailySoldW += soldW
+        self.dailyCreditedW += creditedW
 
     def hourChanged(self, ts):
         for consumer in self.items:
@@ -195,6 +227,10 @@ class Consumers():
     def reset(self, dayChanged):
         for consumer in self.items:
             consumer.reset(dayChanged)
+        if dayChanged:
+            self.dailySolarW = 0
+            self.dailySoldW = 0
+            self.dailyCreditedW = 0
 
     def publishHourChange(self, ts):
         consumerArr = []
@@ -203,13 +239,18 @@ class Consumers():
             consumerArr.append(consumer.publishHourChange(ts))
 
         jsonRec = {
-                "id"        : "hourlycalc",
-                "ts"        : ts,
-                "consumers" : consumerArr
+                "id"            : "hourlycalc",
+                "ts"            : ts,
+                "solarW"        : self.solarW,
+                "soldW"         : self.soldW,
+                "soldCents"     : round(self.soldW / 1000 * pricing.sellPrice(), 2),
+                "creditedW"     : self.creditedW,
+                "creditedCents" : round((self.creditedW / 1000) * pricing.buyPrice(),2),
+                "consumers"     : consumerArr
             }
         topic = mqtt_broker.topic_prefix + "/calculations/hourly"
-        print(topic, json.dumps(jsonRec))
-        #client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+        #print(topic, json.dumps(jsonRec))
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
     def publishDayChange(self, ts):
@@ -219,19 +260,23 @@ class Consumers():
             consumerArr.append(consumer.publishDayChange(ts))
 
         jsonRec = {
-                "id"        : "dailycalc",
-                "ts"        : ts,
-                "consumers" : consumerArr
+                "id"            : "dailycalc",
+                "ts"            : ts,
+                "solarW"        : self.dailySolarW,
+                "soldW"         : self.dailySoldW,
+                "creditedW"     : self.dailyCreditedW,
+                "consumers"     : consumerArr
             }
         topic = mqtt_broker.topic_prefix + "/calculations/daily"
-        print(topic, json.dumps(jsonRec))
-        #client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+        #print(topic, json.dumps(jsonRec))
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
     def hourlyWatts(self):
         ret = 0
         for consumer in self.items:
-            ret += consumer.hourlyWatts
+            if consumer.isElectricity:
+                ret += consumer.hourlyWatts
         return ret
 
     def dailyWatts(self):
@@ -258,9 +303,10 @@ thermostat  = Consumer("thermostat",   29,   600, pricing.buyPrice)
 stockheater = Consumer("stockheat",     1,  4000, pricing.buyPrice)
 solheater   = Consumer("solheat",       1,  2000, pricing.surplusPrice)
 storefridge = Consumer("sfridge",       1,    80, pricing.buyPrice)
-heatpump    = Consumer("heatpump",    100,  2000, pricing.buyPrice)
+heatpump    = Consumer("heatpump",    100,  2200, pricing.buyPrice)
 # burner will not be calculated to the sum of electricity consumers.
 burner      = Consumer("burner",        1, 20800, pricing.oilPrice, False) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
+allOther    = Consumer("other",         1,     0, pricing.buyPrice)
 
 solar       = SolarProduction()
 elProduction  = ElProduction()
@@ -272,46 +318,67 @@ consumers = Consumers([thermostat,
                        solheater,
                        storefridge,
                        heatpump,
+                       allOther,
                        burner])
 
-def calcHourChange(newTs):
+def isHourChangeReady(ts):
     global hourCalcPending
 
+    seconds = ts % 3600
+    if seconds > 20:
+        hourCalcPending = False
+        return False
+
     if hourCalcPending:
-        netto = elProduction.hourChanged()
-        if netto > 0:
-            creditedW = round(solar.hourlyKw * 1000) - netto
-            otherConsumptionW = creditedW - consumers.hourlyWatts()
-            otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
-            print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
-            creditedCents = round((creditedW / 1000) * pricing.buyPrice(),2)
-            print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
-            print(datetime.utcnow(),'Solar production is', netto,'W,',round(pricing.sellPrice() * netto / 1000,1),'cents.')
-        else:
-            creditedW = 0
-            creditedCents = 0
-            otherConsumptionW = 0
-
-            if solar.hourlyKw == 0.0:
-                otherConsumptionW = round(-1 * (netto + consumers.hourlyWatts()))
-            else:
-                creditedW = round(solar.hourlyKw * 1000) # netto is now negative
-                otherConsumptionW = creditedW - consumers.hourlyWatts()
-                creditedCents = round((creditedW / 1000) * pricing.buyPrice(),2)
-
-            otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
-            print(datetime.utcnow(),'Credited solar production is', creditedW, 'W', creditedCents, 'cents')
-            print(datetime.utcnow(),"Known consumers consumed:",round(consumers.hourlyWatts()),"price:", round(consumers.hourlyCents(),1))
-            print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
-        solar.hourChanged(newTs)
         hourCalcPending = False
         return True
     else:
-        # are we close to hourchange. when it is so, we are always exactly or some seconds past.
-        seconds = newTs % 3600
-        if seconds < 20:
-            hourCalcPending = True
-        return False
+        hourCalcPending = True
+    return False
+
+# bug with values:
+# solar 700
+# sold 0
+# credited 700
+# consumers 96 + 976 = 1072
+# other -154, po 546!
+
+def calcHourChange(newTs):
+    # netto is the value read from electricity meter, it can be negativi
+    # or positive = production is bigger than consumption
+    netto = elProduction.hourChanged() # this comes from electricity metering
+    if netto > 0:
+        creditedW = round(solar.hourlyKw * 1000) - netto
+        otherConsumptionW = creditedW - consumers.hourlyWatts()
+        otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
+        allOther.setHourlyPower(otherConsumptionW, newTs)
+        print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
+        creditedCents = round((creditedW / 1000) * pricing.buyPrice(),2)
+        print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
+        print(datetime.utcnow(),'Sold solar production is', netto,'W,',round(pricing.sellPrice() * netto / 1000,1),'cents.')
+        consumers.totals(solar.hourlyKw , netto, creditedW)
+    else:
+        creditedW = 0
+        creditedCents = 0
+        # -1 * (netto -700 + 1072)
+        otherConsumptionW = round(-1 * (netto - round(solar.hourlyKw * 1000) + consumers.hourlyWatts()))
+
+        if solar.hourlyKw != 0.0:
+            creditedW = round(solar.hourlyKw * 1000)
+            creditedCents = round(solar.hourlyKw * pricing.buyPrice(),2)
+
+        consumers.totals(solar.hourlyKw , 0, creditedW)
+        allOther.setHourlyPower(otherConsumptionW, newTs)
+        otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
+        print(datetime.utcnow(),'Credited solar production is', creditedW, 'W', creditedCents, 'cents')
+        print(datetime.utcnow(),"Known consumers consumed:",round(consumers.hourlyWatts()),"price:", round(consumers.hourlyCents(),1))
+        print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
+    solar.hourChanged(newTs)
+
+
+def isDayChanged(ts):
+    tm = time.localtime(ts)
+    return tm.tm_hour == 0
 
 
 def processData(mqttdata):
@@ -327,6 +394,7 @@ def processData(mqttdata):
     id = indata['id']
     if id == 'heatsetup':
         print(datetime.utcnow(),"received prices",indata['eltransferprice'], indata['elprice'],"heatoil",indata['heatoilprice'])
+        print(datetime.utcnow(), "buy commission",indata['elprice'],"sell commission",indata['elselcommission'])
         pricing.setup(float(indata['eltransferprice']), float(indata['elprice']), float(indata['elselcommission']), float(indata['heatoilprice']))
 
     elif id == 'thermostat':
@@ -371,39 +439,50 @@ def processData(mqttdata):
 
     elif id == 'power15min':
         newTs = int(indata['ts'])
-        tm = time.localtime(newTs)
-        dayChanged = (tm.tm_hour == 0)
-
         elProduction.update(indata['W15min'], newTs)
-        resetNeeded = calcHourChange(newTs)
-        if resetNeeded:
-            if dayChanged:
+
+        if isHourChangeReady(newTs):
+            print(datetime.utcnow(),"The calculations are done with buyprice", pricing.buyPrice(), "and sellprice", pricing.sellPrice())
+            calcHourChange(newTs)
+            consumers.hourChanged(newTs)
+            if elProduction.sampleCnt > 1: # prevent publish in startup
+                consumers.publishHourChange(newTs)
+
+            if isDayChanged(newTs):
+                consumers.publishDayChange(newTs)
                 solar.reset()
-            consumers.reset(dayChanged)
+                consumers.reset(True)
+                elProduction.reset(True)
+            else:
+                consumers.reset(False)
+                elProduction.reset(False)
+            pricing.commitPrice(newTs)
+            print("---------------------------------------------------------")
 
     # elprice/current topic changes just after the hour has been changed.
     # this triggers many calculations and printing/topic updates.
     elif id == 'elprice':
-        print(datetime.utcnow(),"The calculations are done with buyprice", pricing.buyPrice(), "and sellprice", pricing.sellPrice())
         newTs = int(indata['ts'])
-        tm = time.localtime(newTs)
-        dayChanged = (tm.tm_hour == 0)
-
-        consumers.hourChanged(newTs)
-        if elProduction.sampleCnt > 1: # prevent publish in startup
-            consumers.publishHourChange(newTs)
-        resetNeeded = calcHourChange(newTs)
         pricing.update(float(indata['price']), float(indata['notax']), newTs)
 
-        if dayChanged:
-            consumers.publishDayChange(newTs)
-            print(datetime.utcnow(),"Total daily watts consumed:",consumers.dailyWatts(),"price:", consumers.dailyCents())
-            if resetNeeded:
+        if isHourChangeReady(newTs):
+            print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
+            calcHourChange(newTs)
+            consumers.hourChanged(newTs)
+            if elProduction.sampleCnt > 1: # prevent publish in startup
+                consumers.publishHourChange(newTs)
+            if isDayChanged(newTs):
+                consumers.publishDayChange(newTs)
+                print(datetime.utcnow(),"Total daily watts consumed:",consumers.dailyWatts(),"price:", consumers.dailyCents())
                 solar.reset()
+                consumers.reset(True)
+                elProduction.reset(True)
+            else:
+                consumers.reset(False)
+                elProduction.reset(False)
+            pricing.commitPrice(newTs)
+            print("---------------------------------------------------------")
 
-        if resetNeeded:
-            consumers.reset(dayChanged)
-        print("---------------------------------------------------------")
 
 def on_message(client, userdata, message):
     msgqueue.put(message)
