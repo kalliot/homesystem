@@ -1,0 +1,158 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+    <head>
+        <title>Calculations</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="mqttws31.js" type="text/javascript"></script>
+        <script src="jquery.min.js" type="text/javascript"></script>
+        
+        <script src="config.js" type="text/javascript"></script>
+        <link rel="stylesheet" href="setup.css" type="text/css">
+        <script type="text/javascript">
+
+var mqtt;
+    var reconnectTimeout = 10000;
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "heatersetup_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 60,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("<---- connected ---->")
+        mqtt.subscribe("home/kallio/calculations/hourly", {qos: 0});
+        mqtt.subscribe("home/kallio/calculations/daily", {qos: 0});
+        $('#topic').val(topic);
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+        $('#status').val("connection lost: " + response.errorMessage + ". Reconnecting");
+        var d = new Date();
+        $('#errors').append("Mqtt:" + d.toLocaleString() + "connection lost\r\n"); 
+    };
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+
+        const obj = JSON.parse(payload);
+        if (obj.id == "hourlycalc")
+        {
+            var totalWatts = 0;
+            const d = new Date(obj.ts * 1000);
+            $('#lasthour').html(d.toString());
+
+            $('#solarenergy').html(obj.solarW  + ' W');
+            $('#creditedW').html(obj.creditedW + ' W');
+            $('#creditedCents').html(obj.creditedCents + ' Cents');
+            $('#soldenergy').html(obj.soldW + ' W');
+            $('#soldCents').html(obj.soldCents + ' Cents');
+
+            $('#consumers').empty();
+            $('#consumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th></tr>');
+            consumerarr = obj.consumers;
+            for (consumer of consumerarr)
+            {
+                $('#consumers').append('<tr><td>' + consumer.name + '</td>'  +
+                                        '<td>' + consumer.watts + '</td>' +
+                                        '<td>' + consumer.cents + '</td>' +
+                                        '<td>' +consumer.type + '</td>' +
+                                        '<td><progress class="graph" id="progr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
+                totalWatts += consumer.watts;
+            }
+            $('.graph').attr('max', totalWatts);
+        }
+
+        if (obj.id == "dailycalc")
+        {
+            var totalWatts = 0;
+            const d = new Date(obj.ts * 1000);
+            $('#yesterday').html(d.toString());
+
+            $('#dsolarenergy').html(obj.solarW  + ' W');
+            $('#dcreditedW').html(obj.creditedW + ' W');
+            $('#dcreditedCents').html(obj.creditedCents + ' Cents');
+            $('#dsoldenergy').html(obj.soldW + ' W');
+            $('#dsoldCents').html(obj.soldCents + ' Cents');
+
+            $('#dconsumers').empty();
+            $('#dconsumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th></tr>');
+            consumerarr = obj.consumers;
+            for (consumer of consumerarr)
+            {
+                $('#dconsumers').append('<tr><td>' + consumer.name + '</td>'  +
+                                        '<td>' + consumer.watts + '</td>' +
+                                        '<td>' + consumer.cents + '</td>' +
+                                        '<td>' +consumer.type + '</td>' +
+                                        '<td><progress class="dgraph" id="dprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
+                totalWatts += consumer.watts;
+            }
+            $('.dgraph').attr('max', totalWatts);
+        }
+
+    }
+
+    $(document).ready(function() {
+        console.log("document ready");
+        MQTTconnect();
+    });
+    </script>
+    </head>
+
+    <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1>Calculations</h1>
+    <table>
+        <tr><td>Last hour</td><td id="lasthour" colspan="3"></td></tr>
+        <tr><td>Solar energy</td><td id="solarenergy"></td></tr>
+        <tr><td>Credited energy</td><td id="creditedW"></td>Credited energy</td><td id="creditedCents"></td></tr>
+        <tr><td>Sold energy</td><td id="soldenergy"></td><td id="soldCents"></td></tr>
+    </table>
+    
+    <br>
+    <table id="consumers">    
+    </table>
+
+    <br><br>
+    <table>
+        <tr><td>Yesterday</td><td id="yesterday" colspan="3"></td></tr>
+        <tr><td>Solar energy</td><td id="dsolarenergy"></td></tr>
+        <tr><td>Credited energy</td><td id="dcreditedW"></td>Credited energy</td><td id="dcreditedCents"></td></tr>
+        <tr><td>Sold energy</td><td id="dsoldenergy"></td><td id="dsoldCents"></td></tr>
+    </table>
+
+    <br>
+    <table id="dconsumers">    
+    </table>
+
+</body>
+</html>
+
