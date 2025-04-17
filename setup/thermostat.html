@@ -74,6 +74,7 @@
 
         console.log(content);
         mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        calcTargetEdges();
         return false;
     }
 
@@ -102,6 +103,7 @@
               ',"hours":"'   + hours +
               '","change":' + change + '}';
         mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        calcTargetEdges();
     }
 
     function sendBoostSetups()
@@ -165,7 +167,8 @@
     }
 
 
-    function onConnectionLost(response) {
+    function onConnectionLost(response)
+    {
         console.log("connection lost");
         setTimeout(MQTTconnect, reconnectTimeout);
     };
@@ -186,6 +189,18 @@
         $(id).attr("class", color);
     }
 
+    function calcTargetEdges()
+    {
+        wdc = parseFloat($('#wdchange').val());
+        wec = parseFloat($('#wechange').val());
+        target = parseFloat($('#target').val());
+
+        mintarget = target - parseFloat($('#lodeduct').val()) - parseFloat($('#drop').val());
+        maxtarget = target + Math.max(wdc,wec) + parseFloat($('#hiboost').val());
+        $('#mintarget').html(mintarget.toFixed(2));
+        $('#maxtarget').html(maxtarget.toFixed(2));
+    }
+
     function onMessageArrived(message) {
 
         var topic = message.destinationName;
@@ -202,18 +217,18 @@
 
             if (obj.pricestate == "high")
             {
-                $('#hiboost').attr("class", "jaune");
-                $('#lodeduct').attr("class", "blanc");
+                $('#hiboost_label').attr("class", "blanc");
+                $('#lodeduct_label').attr("class", "jaune");
             }
             else if (obj.pricestate == "low")
             {
-                $('#hiboost').attr("class", "blanc");
-                $('#lodeduct').attr("class", "jaune");
+                $('#hiboost_label').attr("class", "jaune");
+                $('#lodeduct_label').attr("class", "blanc");
             }
             else if (obj.pricestate == "normal")
             {
-                $('#hiboost').attr("class", "blanc");
-                $('#lodeduct').attr("class", "blanc");
+                $('#hiboost_label').attr("class", "blanc");
+                $('#lodeduct_label').attr("class", "blanc");
             }
         }
 
@@ -234,6 +249,7 @@
             $('#hiboost').val(obj.hiboost);
             $('#lodeduct').val(obj.lodeduct);
             $('#pwmlen').val(obj.pwmlen);
+            calcTargetEdges();
         }
         if (obj.id == "tempsensors")
         {
@@ -298,6 +314,7 @@
                 color = 'rouge';
             $('#temperature').attr("class", color);
             $('#currtarget').html(obj.value);
+            calcTargetEdges();
             console.log("got target temperature",obj.value);
         }
         if (obj.id == "ntcreader")
@@ -325,6 +342,7 @@
                     $("#wd" + i.toString()).attr('checked',0);
                }
             }
+            calcTargetEdges();
         }
         if (obj.id == "weekendboost")
         {
@@ -341,7 +359,7 @@
                     $("#we" + i.toString()).attr('checked',0);
                }
             }
-
+            calcTargetEdges();
         }
     };
 
@@ -387,13 +405,13 @@
                                 size=5/>
                     </td>
 
-            <tr><td><label for="hiboost" id="hiboost">Boost when price is low </label></td>
+            <tr><td><label for="hiboost" id="hiboost_label">Boost when price is low </label></td>
                 <td><input type="text" 
                             id="hiboost" 
                             size=5/>
             </td>
             <tr></tr>
-            <tr><td><label for="lodeduct" id="lodeduct">Decrease when price is high</label></td>
+            <tr><td><label for="lodeduct" id="lodeduct_label">Decrease when price is high</label></td>
                 <td><input type="text" 
                             id="lodeduct" 
                             size=5/>
@@ -483,6 +501,8 @@
             <tr><td>Floor current target</td><td id="currtarget"></td></tr>
             <tr><td>Thermostat current level </td><td id="level"></td></tr>
             <tr><td>Floor temperature</td><td id="temperature"></td></tr>
+            <tr><td>Minimum possible target</td><td id="mintarget"></td></tr>
+            <tr><td>Maximum possible target</td><td id="maxtarget"></td></tr>
         </table>
         </td>
 

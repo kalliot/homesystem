@@ -51,7 +51,12 @@ class SolarProduction:
 
     def update(self, daily):
         if self.prevSample != -1:
-            self.hourlyKw += (daily - self.prevSample)
+            diff = daily - self.prevSample
+            if diff < 0: # solis has started a new day.
+                self.reset()
+                self.hourlyKw = daily
+            else:
+                self.hourlyKw += diff
         self.dailyKw = daily
         self.prevSample = daily
 
