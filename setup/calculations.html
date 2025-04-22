@@ -68,7 +68,9 @@ var mqtt;
         if (obj.id == "hourlycalc")
         {
             var totalWatts = 0;
+            var totalCents = 0;
             const d = new Date(obj.ts * 1000);
+
             $('#lasthour').html(d.toString());
 
             $('#solarenergy').html(obj.solarW  + ' W');
@@ -78,7 +80,7 @@ var mqtt;
             $('#soldCents').html(obj.soldCents + ' Cents');
 
             $('#consumers').empty();
-            $('#consumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th></tr>');
+            $('#consumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
             consumerarr = obj.consumers;
             for (consumer of consumerarr)
             {
@@ -88,13 +90,20 @@ var mqtt;
                                         '<td>' +consumer.type + '</td>' +
                                         '<td><progress class="graph" id="progr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
                 totalWatts += consumer.watts;
+                totalCents += consumer.cents;
             }
+
+            $('#consumers').append('<tr><td>Sum</td>' +
+                                       '<td>' + totalWatts.toString() + '</td>' +
+                                       '<td>' + totalCents.toFixed(2).toString() + '</td></tr>');
             $('.graph').attr('max', totalWatts);
         }
 
         if (obj.id == "dailycalc")
         {
             var totalWatts = 0;
+            var totalCents = 0;
+
             const d = new Date(obj.ts * 1000);
             $('#yesterday').html(d.toString());
 
@@ -105,7 +114,7 @@ var mqtt;
             $('#dsoldCents').html(obj.soldCents + ' Cents');
 
             $('#dconsumers').empty();
-            $('#dconsumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th></tr>');
+            $('#dconsumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
             consumerarr = obj.consumers;
             for (consumer of consumerarr)
             {
@@ -115,8 +124,13 @@ var mqtt;
                                         '<td>' +consumer.type + '</td>' +
                                         '<td><progress class="dgraph" id="dprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
                 totalWatts += consumer.watts;
+                totalCents += consumer.cents;
             }
+            $('#dconsumers').append('<tr><td>Sum</td>' +
+                                        '<td>' + totalWatts.toString() + '</td>' +
+                                       ' <td>' + totalCents.toFixed(2).toString() + '</td></tr>');
             $('.dgraph').attr('max', totalWatts);
+
         }
 
     }

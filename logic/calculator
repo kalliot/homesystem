@@ -254,7 +254,6 @@ class Consumers():
                 "consumers"     : consumerArr
             }
         topic = mqtt_broker.topic_prefix + "/calculations/hourly"
-        #print(topic, json.dumps(jsonRec))
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
@@ -326,11 +325,15 @@ consumers = Consumers([thermostat,
                        allOther,
                        burner])
 
+
+
 def isHourChangeReady(ts):
     global hourCalcPending
 
     seconds = ts % 3600
-    if seconds > 20:
+    # we are allowed to be 10 sec before or 20 seconds after hour change.
+    # this is needed, because senders clock may drift a couple of seconds.
+    if seconds > 20 and seconds < 3590:
         hourCalcPending = False
         return False
 
@@ -341,12 +344,6 @@ def isHourChangeReady(ts):
         hourCalcPending = True
     return False
 
-# bug with values:
-# solar 700
-# sold 0
-# credited 700
-# consumers 96 + 976 = 1072
-# other -154, po 546!
 
 def calcHourChange(newTs):
     # netto is the value read from electricity meter, it can be negativi
