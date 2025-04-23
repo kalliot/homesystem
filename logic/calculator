@@ -43,6 +43,8 @@ class ElProduction:
 # day goes on and sun is shining. Update just compares the new
 # value to previous.
 class SolarProduction:
+    __slots__ = ('hourlyKw', 'dailyKw', 'ts', 'prevSample')
+
     def __init__(self):
         self.hourlyKw = 0
         self.dailyKw = 0
@@ -73,6 +75,9 @@ class SolarProduction:
 
 
 class Pricing:
+
+    __slots__ = ('pendingPrice', 'pendingTaxFreePrice', 'price', 'taxFreePrice', 'transferprice', 'buycommission', 'sellcommission', 'oilprice', 'ts')
+
     def __init__(self):
         self.pendingPrice = 0
         self.pendingTaxFreePrice = 0
@@ -207,6 +212,8 @@ class Consumer:
 
 
 class Consumers():
+    __slots__ = ('items', 'solarW', 'soldW', 'creditedW', 'dailySolarW', 'dailySoldW', 'dailyCreditedW')
+    
     def __init__(self, consumer):
         self.items = consumer
         self.solarW = 0
@@ -317,13 +324,13 @@ elProduction  = ElProduction()
 
 hourCalcPending = False
 
-consumers = Consumers([thermostat,
+consumers = Consumers((thermostat,
                        stockheater,
                        solheater,
                        storefridge,
                        heatpump,
                        allOther,
-                       burner])
+                       burner))
 
 
 
