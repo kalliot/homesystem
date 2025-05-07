@@ -1,37 +1,38 @@
 #!/usr/bin/env python
 
 from datetime import datetime
-import time
+from time import time, localtime, sleep
 import json
-import os
+from os import getpid as getpid
 import paho.mqtt.client as mqtt 
-import sys
+from sys import path
 from queue import Queue
 
-sys.path.insert(1, '/home/pi/config')
+path.insert(1, '/home/pi/config')
 from setup import *
 
 class ElProduction:
-    def __init__(self):
+    __slots__ = ('value', 'dailyWatts', 'sampleCnt', 'ts')
+    def __init__(self) -> None:
         self.value = 0
         self.dailyWatts = 0
         self.sampleCnt = 0
-        self.ts = int(time.time())
+        self.ts = int(time())
 
-    def update(self,sample, ts):
+    def update(self,sample : int, ts : int) -> None:
         self.value += sample
         self.ts = ts
         self.sampleCnt += 1
 
-    def hourChanged(self):
+    def hourChanged(self) -> int:
         if self.sampleCnt != 4:
             print(datetime.utcnow(),"Warning, not all quarterhour samples received!")
         ret = int(self.value / self.sampleCnt)
         self.dailyWatts += ret
         return ret
 
-    def reset(self, dayChanged):
-        self.ts = int(time.time())
+    def reset(self, dayChanged : bool) -> None:
+        self.ts = int(time())
         self.value = 0
         self.sampleCnt = 0
 
@@ -43,13 +44,15 @@ class ElProduction:
 # day goes on and sun is shining. Update just compares the new
 # value to previous.
 class SolarProduction:
-    def __init__(self):
+    __slots__ = ('hourlyKw', 'dailyKw', 'ts', 'prevSample')
+
+    def __init__(self) -> None:
         self.hourlyKw = 0
         self.dailyKw = 0
-        self.ts = int(time.time())
+        self.ts = int(time())
         self.prevSample = -1
 
-    def update(self, daily):
+    def update(self, daily : float) -> None:
         if self.prevSample != -1:
             diff = daily - self.prevSample
             if diff < 0: # solis has started a new day.
@@ -60,20 +63,22 @@ class SolarProduction:
         self.dailyKw = daily
         self.prevSample = daily
 
-    def hourChanged(self,ts):
+    def hourChanged(self,ts : int) -> None:
         print(datetime.utcnow(), "solis reported solar production in prev hour was", round(self.hourlyKw * 1000),"watts.")
         self.hourlyKw = 0
         self.ts = ts
 
-    def reset(self):
+    def reset(self) -> None:
         self.hourlyKw = 0
-        self.ts = int(time.time())
+        self.ts = int(time())
         self.dailyKw = 0
         self.prevSample = 0
 
 
 class Pricing:
-    def __init__(self):
+    __slots__ = ('pendingPrice', 'pendingTaxFreePrice', 'price', 'taxFreePrice', 'transferprice', 'buycommission', 'sellcommission', 'oilprice', 'ts')
+
+    def __init__(self) -> None:
         self.pendingPrice = 0
         self.pendingTaxFreePrice = 0
         self.price = -100
@@ -82,9 +87,9 @@ class Pricing:
         self.buycommission = 0
         self.sellcommission = 0
         self.oilprice = 0 # in euros
-        self.ts = int(time.time())
+        self.ts = int(time())
 
-    def update(self, price, taxfree, ts):
+    def update(self, price : float, taxfree : float, ts : int) -> None:
         self.pendingPrice = price
         self.pendingTaxFreePrice = taxfree
         if self.price == -100:
@@ -92,34 +97,34 @@ class Pricing:
             self.taxFreePrice = taxfree
         self.ts = ts
 
-    def commitPrice(self,ts):
+    def commitPrice(self,ts : int) -> None:
         self.ts = ts
         self.price = self.pendingPrice
         self.taxFreePrice = self.pendingTaxFreePrice
 
-    def setup(self, transfer, commission, sellcommission, oilprice):    
+    def setup(self, transfer : float, commission : float, sellcommission : float, oilprice : float) -> None:
         self.buycommission = commission
         self.transferprice = transfer
         self.oilprice = oilprice
         self.sellcommission = sellcommission
 
-    def buyPrice(self):
+    def buyPrice(self) -> float:
         return self.price + self.buycommission + self.transferprice
 
-    def sellPrice(self):
+    def sellPrice(self) -> float:
         ret = self.taxFreePrice - self.sellcommission
         if ret < 0:
             ret = 0
         return ret
 
-    def surplusPrice(self):
+    def surplusPrice(self) -> float:
         return self.buyPrice() - self.sellPrice()
 
-    def oilPrice(self):
+    def oilPrice(self) -> float:
         return self.oilprice * 10.8 # convert to cents per kwh and consider efficiency
 
 class Consumer:
-    def __init__(self, name, levels, power, priceFunc, isElectricity = True):
+    def __init__(self, name : str, levels : int, power : int, priceFunc, isElectricity : bool=True):
         self.name = name
         self.isElectricity = isElectricity
         self.levels = levels
@@ -129,11 +134,11 @@ class Consumer:
         self.hourlyCents = 0
         self.dailyCents = 0
         self.currentLevel = 0
-        self.ts = int(time.time())
+        self.ts = int(time())
         self.currentPower = 0
         self.priceFunc = priceFunc
 
-    def update(self, level, ts):
+    def update(self, level : int, ts : int) -> None:
         minsaveinterval = 1200 # if level is changed, save anyways
         seconds = ts - self.ts
 
@@ -153,14 +158,14 @@ class Consumer:
         self.currentPower = level / self.levels * self.power # in watts
         print(datetime.utcnow(),self.name, "Power is", round(self.currentPower), ". Cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
 
-    def setHourlyPower(self, watts, ts):
+    def setHourlyPower(self, watts : int, ts : int) -> None:
         self.hourlyWatts = watts
         self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
         self.dailyCents += self.hourlyCents
         self.dailyWatts += self.hourlyWatts
         self.ts = ts
 
-    def publishHourChange(self, ts):
+    def publishHourChange(self, ts : int) -> dict:
         typ = "el"
         if not self.isElectricity:
             typ = "oil"
@@ -173,7 +178,7 @@ class Consumer:
             }
         return jsonRec
 
-    def publishDayChange(self, ts):
+    def publishDayChange(self, ts : int) -> dict:
         typ = "el"
         if not self.isElectricity:
             typ = "oil"
@@ -186,7 +191,7 @@ class Consumer:
             }
         return jsonRec
 
-    def hourChanged(self,ts):
+    def hourChanged(self,ts : int) -> None:
         seconds = ts - self.ts
         if seconds < 0:
             seconds = 0
@@ -196,48 +201,56 @@ class Consumer:
         self.dailyWatts += self.hourlyWatts
         print(datetime.utcnow(), self.name, round(self.hourlyWatts,1), "/", round(self.dailyWatts,1),"Watts. Cents tot prev hour =", round(self.hourlyCents,2), ",day", round(self.dailyCents,2))
 
-    def reset(self, dayChanged):
+    def reset(self, dayChanged : bool) -> None:
         if dayChanged:
             self.dailyCents = 0
             self.dailyWatts = 0
         self.hourlyCents = 0
         self.hourlyWatts = 0
-        self.ts = int(time.time()) # restart hourly second counting.
+        self.ts = int(time()) # restart hourly second counting.
 
 
 
 class Consumers():
-    def __init__(self, consumer):
+    __slots__ = ('items', 'solarW', 'soldW', 'soldCents', 'creditedW', 'dailySolarW', 'dailySoldW', 'dailySoldCents','dailyCreditedW')
+
+    def __init__(self, consumer : str) -> None:
         self.items = consumer
         self.solarW = 0
         self.soldW = 0
+        self.soldCents = 0
         self.creditedW = 0
         self.dailySolarW = 0
         self.dailySoldW = 0
+        self.dailySoldCents = 0
         self.dailyCreditedW = 0
 
-    def totals(self, solarKw, soldW, creditedW):
+
+    def totals(self, solarKw : float, soldW : int, creditedW : int) -> None:
         self.solarW = round(1000 * solarKw)
         self.soldW = soldW
         self.creditedW = creditedW
+        self.soldCents = soldW / 1000 * pricing.sellPrice()
 
         self.dailySolarW += round(1000 * solarKw)
         self.dailySoldW += soldW
+        self.dailySoldCents += self.soldCents
         self.dailyCreditedW += creditedW
 
-    def hourChanged(self, ts):
+    def hourChanged(self, ts : int) -> None:
         for consumer in self.items:
             consumer.hourChanged(ts)
 
-    def reset(self, dayChanged):
+    def reset(self, dayChanged) -> None:
         for consumer in self.items:
             consumer.reset(dayChanged)
         if dayChanged:
             self.dailySolarW = 0
             self.dailySoldW = 0
             self.dailyCreditedW = 0
+            self.dailySoldCents = 0
 
-    def publishHourChange(self, ts):
+    def publishHourChange(self, ts : int) -> None:
         consumerArr = []
 
         for consumer in self.items:
@@ -248,7 +261,7 @@ class Consumers():
                 "ts"            : ts,
                 "solarW"        : self.solarW,
                 "soldW"         : self.soldW,
-                "soldCents"     : round(self.soldW / 1000 * pricing.sellPrice(), 2),
+                "soldCents"     : round(self.soldCents, 2),
                 "creditedW"     : self.creditedW,
                 "creditedCents" : round((self.creditedW / 1000) * pricing.buyPrice(),2),
                 "consumers"     : consumerArr
@@ -257,10 +270,16 @@ class Consumers():
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
-    def publishDayChange(self, ts):
+    def publishDayChange(self, ts : int) -> None:
         consumerArr = []
+        oilCents = 0
+        elCents = 0
 
         for consumer in self.items:
+            if consumer.isElectricity:
+                elCents += consumer.dailyCents
+            else:
+                oilCents += consumer.dailyCents
             consumerArr.append(consumer.publishDayChange(ts))
 
         jsonRec = {
@@ -269,37 +288,42 @@ class Consumers():
                 "solarW"        : self.dailySolarW,
                 "soldW"         : self.dailySoldW,
                 "creditedW"     : self.dailyCreditedW,
+                "creditedCents" : round(elCents,2),
+                "heatOilCents"  : oilCents,
+                "soldCents"     : round(self.dailySoldCents,2),
                 "consumers"     : consumerArr
             }
         topic = mqtt_broker.topic_prefix + "/calculations/daily"
-        #print(topic, json.dumps(jsonRec))
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
-    def hourlyWatts(self):
+    def hourlyWatts(self) -> int:
         ret = 0
         for consumer in self.items:
             if consumer.isElectricity:
                 ret += consumer.hourlyWatts
         return ret
 
-    def dailyWatts(self):
+    def dailyWatts(self) -> int:
         ret = 0
         for consumer in self.items:
             if consumer.isElectricity:
                 ret += consumer.dailyWatts
         return ret
 
-    def hourlyCents(self):
-        ret = 0
+    def hourlyCents(self) -> float:
+        ret = float(0.0)
+
         for consumer in self.items:
-            ret += consumer.hourlyCents
+            if consumer.isElectricity:
+                ret += consumer.hourlyCents
         return ret
 
     def dailyCents(self):
-        ret = 0
+        ret = float(0.0)
         for consumer in self.items:
-            ret += consumer.dailyCents
+            if consumer.isElectricity:
+                ret += consumer.dailyCents
         return ret
 
 pricing = Pricing()
@@ -317,23 +341,23 @@ elProduction  = ElProduction()
 
 hourCalcPending = False
 
-consumers = Consumers([thermostat,
+consumers = Consumers((thermostat,
                        stockheater,
                        solheater,
                        storefridge,
                        heatpump,
                        allOther,
-                       burner])
+                       burner))
 
 
 
-def isHourChangeReady(ts):
+def isHourChangeReady(ts : int) -> bool:
     global hourCalcPending
 
-    seconds = ts % 3600
+    seconds = int(ts % 3600)
     # we are allowed to be 10 sec before or 20 seconds after hour change.
     # this is needed, because senders clock may drift a couple of seconds.
-    if seconds > 20 and seconds < 3590:
+    if seconds > 20 and seconds < (3600 - 10):
         hourCalcPending = False
         return False
 
@@ -345,7 +369,7 @@ def isHourChangeReady(ts):
     return False
 
 
-def calcHourChange(newTs):
+def calcHourChange(newTs : int) -> None:
     # netto is the value read from electricity meter, it can be negativi
     # or positive = production is bigger than consumption
     netto = elProduction.hourChanged() # this comes from electricity metering
@@ -378,19 +402,19 @@ def calcHourChange(newTs):
     solar.hourChanged(newTs)
 
 
-def isDayChanged(ts):
-    tm = time.localtime(ts)
+def isDayChanged(ts : int) -> bool:
+    tm = localtime(ts)
     return tm.tm_hour == 0
 
 
-def processData(mqttdata):
+def processData(mqttdata) -> None:
     arr = mqttdata.topic.split("/")
     indata = json.loads(mqttdata.payload)
     item = arr[1]
 
     # bosch heatpump
     if item == "boiler_data":
-        heatpump.update(int(indata['hpcompspd']), int(time.time()))
+        heatpump.update(int(indata['hpcompspd']), int(time()))
         return
 
     id = indata['id']
@@ -401,20 +425,26 @@ def processData(mqttdata):
 
     elif id == 'thermostat':
         newTs = int(indata['ts'])
+        if newTs == 0:
+            newTs = int(time())
         thermostat.update(int(indata['value']), newTs)
 
     elif id == 'cooler':
         newTs = int(indata['ts'])
+        if newTs == 0:
+            newTs = int(time())
         storefridge.update(int(indata['value']), newTs)
 
     elif id == 'state':
         if indata['sensor'] == 33:
             newTs = int(indata['ts'])
+            if newTs == 0:
+                newTs = int(time())
             burner.update(int(indata['value']), newTs)
 
     # handle devices which dropped out.
     elif id == 'device' and indata['connected'] == 0:
-        newTs = int(time.time()) # data does not have a timestamp
+        newTs = int(time()) # data does not have a timestamp
         if indata['type'] == 'thermostat':
             thermostat.update(0, newTs)
 
@@ -424,6 +454,9 @@ def processData(mqttdata):
     elif id == 'relay':
         contact = int(indata['contact'])
         newTs = int(indata['ts'])
+        if newTs == 0:
+            newTs = int(time())
+
         if contact == 0: # solar energy heating
             state = indata['state']
             level = 0
@@ -441,6 +474,8 @@ def processData(mqttdata):
 
     elif id == 'power15min':
         newTs = int(indata['ts'])
+        if newTs == 0:
+            newTs = int(time())
         elProduction.update(indata['W15min'], newTs)
 
         if isHourChangeReady(newTs):
@@ -507,9 +542,9 @@ def on_disconnect(client, userdata, rc):
             client.reconnect()
         except:
             print(datetime.utcnow(),"reconnect failed, waiting...")
-            time.sleep(30)
+            sleep(30)
     else:
-        time.sleep(1)
+        sleep(1)
 
 
 def on_publish(client, userdata,result):
@@ -518,7 +553,7 @@ def on_publish(client, userdata,result):
 msgqueue = Queue(maxsize=10)
 
 
-client = mqtt.Client('calculator' + str(os.getpid()))
+client = mqtt.Client('calculator' + str(getpid()))
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
