@@ -11,6 +11,8 @@ from queue import Queue
 path.insert(1, '/home/pi/config')
 from setup import *
 
+subtopic = '/calculations/'
+
 class ElProduction:
     __slots__ = ('value', 'dailyWatts', 'sampleCnt', 'ts')
     def __init__(self) -> None:
@@ -222,7 +224,7 @@ class Consumer:
 
 
 class Consumers():
-    __slots__ = ('items', 'solarW', 'soldW', 'soldCents', 'creditedW', 'dailySolarW', 'dailySoldW', 'dailySoldCents','dailyCreditedW')
+    __slots__ = ('items', 'solarW', 'soldW', 'soldCents', 'creditedW', 'creditedCents', 'dailySolarW', 'dailySoldW', 'dailySoldCents','dailyCreditedW', 'dailyCreditedCents')
 
     def __init__(self, consumer : str) -> None:
         self.items = consumer
@@ -230,16 +232,19 @@ class Consumers():
         self.soldW = 0
         self.soldCents = 0
         self.creditedW = 0
+        self.creditedCents = 0
         self.dailySolarW = 0
         self.dailySoldW = 0
         self.dailySoldCents = 0
         self.dailyCreditedW = 0
+        self.dailyCreditedCents = 0
 
-    def setDailies(self, solarw : int, soldw : int, soldCents : float, creditedW : int) -> None:
+    def setDailies(self, solarw : int, soldw : int, soldCents : float, creditedW : int, creditedCents : int) -> None:
         self.dailySolarW = solarw
         self.dailySoldW = soldw
         self.dailySoldCents = soldCents
         self.dailyCreditedW = creditedW
+        self.dailyCreditedCents = creditedCents
 
     def getConsumer(self, name) -> Consumer:
         for consumer in self.items:
@@ -251,12 +256,14 @@ class Consumers():
         self.solarW = round(1000 * solarKw)
         self.soldW = soldW
         self.creditedW = creditedW
+        self.creditedCents = (self.creditedW / 1000) * pricing.buyPrice()
         self.soldCents = soldW / 1000 * pricing.sellPrice()
 
         self.dailySolarW += round(1000 * solarKw)
         self.dailySoldW += soldW
         self.dailySoldCents += self.soldCents
         self.dailyCreditedW += creditedW
+        self.dailyCreditedCents += self.creditedCents
 
     def hourChanged(self, ts : int) -> None:
         for consumer in self.items:
@@ -270,8 +277,10 @@ class Consumers():
             self.dailySoldW = 0
             self.dailyCreditedW = 0
             self.dailySoldCents = 0
+            self.dailyCreditedCents = 0
 
     def publishHourChange(self, ts : int) -> None:
+        global subtopic
         consumerArr = []
 
         for consumer in self.items:
@@ -284,14 +293,15 @@ class Consumers():
                 "soldW"         : self.soldW,
                 "soldCents"     : round(self.soldCents, 2),
                 "creditedW"     : self.creditedW,
-                "creditedCents" : round((self.creditedW / 1000) * pricing.buyPrice(),2),
+                "creditedCents" : round(self.creditedCents,2),
                 "consumers"     : consumerArr
             }
-        topic = mqtt_broker.topic_prefix + "/calculations/hourly"
+        topic = mqtt_broker.topic_prefix + subtopic + "hourly"
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
     def publishDayChange(self, ts : int, prefix : str) -> None:
+        global subtopic
         consumerArr = []
         oilCents = 0
         elCents = 0
@@ -309,12 +319,13 @@ class Consumers():
                 "solarW"        : self.dailySolarW,
                 "soldW"         : self.dailySoldW,
                 "creditedW"     : self.dailyCreditedW,
-                "creditedCents" : round(elCents,2),
+                "creditedCents" : round(self.dailyCreditedCents,2),
                 "heatOilCents"  : round(oilCents,2),
                 "soldCents"     : round(self.dailySoldCents,2),
+                "consumedCents" : round(elCents,2),
                 "consumers"     : consumerArr
             }
-        topic = mqtt_broker.topic_prefix + "/calculations/" + prefix
+        topic = mqtt_broker.topic_prefix + subtopic + prefix
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
@@ -430,6 +441,7 @@ def isDayChanged(ts : int) -> bool:
 
 
 def processData(mqttdata) -> None:
+    global subtopic
     arr = mqttdata.topic.split("/")
     indata = json.loads(mqttdata.payload)
     item = arr[1]
@@ -448,13 +460,13 @@ def processData(mqttdata) -> None:
     elif id == 'predailycalc':
         print(datetime.utcnow(),"Reading predaily sums from the topic.")
         solarW = int(indata['solarW'])
-        consumers.setDailies(solarW, int(indata['soldW']), float(indata['soldCents']), int(indata['creditedW']))
+        consumers.setDailies(solarW, int(indata['soldW']), float(indata['soldCents']), int(indata['creditedW']),int(indata['creditedCents']))
         solar.prevSample = solarW
         for item in indata['consumers']:
             consumer = consumers.getConsumer(item['name'])
             print(datetime.utcnow(),"Reading consumer", item['name'], "start values from the topic.")
             consumer.setDailies(item['watts'], item['cents'])
-        client.unsubscribe(mqtt_broker.topic_prefix + "/calculations/predaily")
+        client.unsubscribe(mqtt_broker.topic_prefix + subtopic + "predaily")
 
     elif id == 'thermostat':
         newTs = int(indata['ts'])
@@ -599,7 +611,7 @@ client.loop_start()
 
 
 
-topics = [(mqtt_broker.topic_prefix + "/calculations/predaily",0),
+topics = [(mqtt_broker.topic_prefix + subtopic + "predaily",0),
           (mqtt_broker.topic_prefix + "/thermostat/+/parameters/level",0),
           (mqtt_broker.topic_prefix + "/heating/setup",0),
           (mqtt_broker.topic_prefix + "/sensors/5bcae4/parameters/state/#",0),
