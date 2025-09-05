@@ -120,7 +120,13 @@ def processData(eldata):
             index = int(result['id'])
             if relays[index].ts == 0:
                 relays[index].ts = int(time.time())
-            relays[index].state = result['output']
+            # ToDo: if relay state is different compared to relays[index].state, should we change actual relay state?
+            #       Or should we inform the homesystem topic?
+            if relays[index].state != result['output']:
+                print(datetime.utcnow(),"relay", index, "differs from housekeeping, informing hometopic")
+                relays[index].state = result['output']
+                publishRelay(index)
+
             relays[index].voltage = float(result['voltage'])
             relays[index].current = float(result['current'])
             temperatures = result['temperature']
@@ -228,9 +234,6 @@ while True:
         processData(msg)
 
     except Empty:
-        publishStats()  # contents are what was in previous queryStatus
-        for rel in relays:
-            queryStatus(rel.index) # querying again, results are shown later.
         waitTime = statsInterval
 
     except KeyboardInterrupt:
