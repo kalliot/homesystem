@@ -31,7 +31,7 @@ class priceStats:
         # first find out min,max and avg from those which are not overpriced.
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if (ts > (now - start * 3600)):
+            if ((ts % 3600 == 0) and ts > (now - start * 3600)):
                 hourCnt += 1
                 if hourCnt > maxcnt:
                     break
@@ -165,7 +165,7 @@ def findCheapHoursByRank(data, maxrank):
 
     for hour in data:
         ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if (ts > (now - 3 * 3600)):
+        if ((ts % 3600 == 0) and ts > (now - 3 * 3600)):
             rank = int(hour['Rank'])
 
             if rank < maxrank +1:
@@ -179,7 +179,7 @@ def findExpensiveHoursByRank(data, minrank):
 
     for hour in data:
         ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if (ts > (now - 3 * 3600)):
+        if ((ts % 3600 == 0) and ts > (now - 3 * 3600)):
             rank = int(hour['Rank'])
 
             if rank > minrank -1:
@@ -207,7 +207,7 @@ def findHeatPumpCheapHours(data):
 
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if (ts > (now - 5 * 3600)):
+            if ((ts % 3600 == 0) and ts > (now - 5 * 3600)):
                 price = round(float(hour['PriceWithTax']) * 100.0,2)
                 if cnt < datalen-1:
                     nextprice = round(float(data[cnt+1]['PriceWithTax']) * 100.0,2)
@@ -261,7 +261,7 @@ def findHeatPumpExpensiveHours(data):
 
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if (ts > (now - 5 * 3600)):
+            if ((ts % 3600 == 0) and ts > (now - 5 * 3600)):
                 price = round(float(hour['PriceWithTax']) * 100.0,2)
                 if cnt < datalen-1:
                     nextprice = round(float(data[cnt+1]['PriceWithTax']) * 100.0,2)
@@ -327,7 +327,7 @@ def findBoostHours(data):
 
     for hour in data:
         ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if (ts > (now - 3600)):
+        if ((ts % 3600 == 0) and ts > (now - 3600)):
             hourCnt += 1
             if hourCnt > 24:
                 break
@@ -420,7 +420,7 @@ for i in range(3):
 
         for hour in data:
             ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if (ts > now):
+            if ((ts % 3600 == 0) and ts > now):
                 cnt = cnt +1
                 if (cnt > 22):
                     break
