@@ -14,7 +14,9 @@ from setup import *
 subtopic = '/calculations/'
 
 class ElProduction:
+
     __slots__ = ('value', 'dailyWatts', 'sampleCnt', 'ts')
+
     def __init__(self) -> None:
         self.value = 0
         self.dailyWatts = 0
@@ -45,6 +47,7 @@ class ElProduction:
 # Solis resets this when day changes and cumulates it while the
 # day goes on and sun is shining. Update just compares the new
 # value to previous.
+
 class SolarProduction:
     __slots__ = ('hourlyKw', 'dailyKw', 'ts', 'prevSample')
 
@@ -126,13 +129,14 @@ class Pricing:
         return self.oilprice * 10.8 # convert to cents per kwh and consider efficiency
 
 class Consumer:
-    __slots__ = ('name', 'isElectricity', 'levels', 'power', 'hourlyWatts', 'dailyWatts', 'hourlyCents', 'dailyCents', 'currentLevel', 'ts', 'currentPower', 'priceFunc')
+    __slots__ = ('name', 'isElectricity', 'levels', 'power', 'basepower', 'hourlyWatts', 'dailyWatts', 'hourlyCents', 'dailyCents', 'currentLevel', 'ts', 'currentPower', 'priceFunc')
 
-    def __init__(self, name : str, levels : int, power : int, priceFunc, isElectricity : bool=True):
+    def __init__(self, name : str, levels : int, power : int, basepower : int, priceFunc, isElectricity : bool=True):
         self.name = name
         self.isElectricity = isElectricity
         self.levels = levels
         self.power = power
+        self.basepower = basepower
         self.hourlyWatts = 0
         self.dailyWatts = 0
         self.hourlyCents = 0
@@ -165,6 +169,8 @@ class Consumer:
         self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
+        if self.currentPower:
+            self.currentPower += self.basepower
         print(datetime.utcnow(),self.name, "Power is", round(self.currentPower), ". Cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
 
     def setHourlyPower(self, watts : int, ts : int) -> None:
@@ -359,14 +365,16 @@ class Consumers():
         return ret
 
 pricing = Pricing()
-thermostat  = Consumer("thermostat",   29,   600, pricing.buyPrice)
-stockheater = Consumer("stockheat",     1,  4000, pricing.buyPrice)
-solheater   = Consumer("solheat",       1,  2000, pricing.surplusPrice)
-storefridge = Consumer("sfridge",       1,    80, pricing.buyPrice)
-heatpump    = Consumer("heatpump",    100,  2200, pricing.buyPrice)
+# ----------------------name--------steps--power-basepwr-pricecalc ----
+thermostat  = Consumer("thermostat",   29,   600, 0, pricing.buyPrice)
+stockheater = Consumer("stockheat",     1,  4000, 0, pricing.buyPrice)
+solheater   = Consumer("solheat",       1,  2000, 0, pricing.surplusPrice)
+storefridge = Consumer("sfridge",       1,    80, 0, pricing.buyPrice)
+# if heatpump is on, it consumes at least 150w
+heatpump    = Consumer("heatpump",    100,  2050, 150, pricing.buyPrice)
 # burner will not be calculated to the sum of electricity consumers.
-burner      = Consumer("burner",        1, 20800, pricing.oilPrice, False) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
-allOther    = Consumer("other",         1,     0, pricing.buyPrice)
+burner      = Consumer("burner",        1, 20800, 0, pricing.oilPrice, False) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
+allOther    = Consumer("other",         1,     0, 0, pricing.buyPrice)
 
 solar       = SolarProduction()
 elProduction  = ElProduction()
@@ -461,7 +469,7 @@ def processData(mqttdata) -> None:
         print(datetime.utcnow(),"Reading predaily sums from the topic.")
         solarW = int(indata['solarW'])
         consumers.setDailies(solarW, int(indata['soldW']), float(indata['soldCents']), int(indata['creditedW']),int(indata['creditedCents']))
-        solar.prevSample = solarW
+        solar.prevSample = round(solarW / 1000, 2)
         for item in indata['consumers']:
             consumer = consumers.getConsumer(item['name'])
             print(datetime.utcnow(),"Reading consumer", item['name'], "start values from the topic.")
