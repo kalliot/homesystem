@@ -19,6 +19,7 @@ heatpump_min_temp = -17
 heatpump_restore_temp = -13
 outtemp = 0.0
 auxonly = False
+priceState = 'normal'
 auxchanged = 0
 hitemphours = []
 lotemphours = []
@@ -111,32 +112,6 @@ hsetup = heatSetup()
 floortemp = temperature('ems-esp/thermostat/hc2/seltemp')
 roomtemp = temperature('ems-esp/thermostat/seltemp')
 cop = cop_calculator()
-
-
-def checkHiTemp():
-    current_date = datetime.utcnow().strftime("%Y%m%d%H")
-
-    for cd in hitemphours:
-        print(datetime.utcnow(),"comparing",current_date,"==",cd)
-        if current_date == cd:
-            print(datetime.utcnow(),"HiTemp is active")
-            return True
-
-    print(datetime.utcnow(),"HiTemp is passive")
-    return False
-
-
-def checkLoTemp():
-    current_date = datetime.utcnow().strftime("%Y%m%d%H")
-
-    for cd in lotemphours:
-        print(datetime.utcnow(),"comparing",current_date,"==",cd)
-        if current_date == cd:
-            print(datetime.utcnow(),"LoTemp is active")
-            return True
-
-    print(datetime.utcnow(),"LoTemp is passive")
-    return False
 
 
 def publishError(category, code, description):
@@ -246,11 +221,11 @@ def desiredTemperatures():
     global auxonly, outtemp, useboosthourstemp
 
     if auxonly == False and outtemp > useboosthourstemp and outtemp < 14: # when it is colder, this affects only for aux mix => not needed.
-        if checkHiTemp():                                                 # and when it is over 14 the heating is not on.
+        if priceState == 'low':
             desiredroomtemp   = hsetup.hiroom
             desiredfloortemp  = hsetup.hifloor
             return
-        elif checkLoTemp(): # lo and hi temp may be conflicting, here hi has bigger priority.
+        elif priceState == 'high':
             desiredroomtemp   = hsetup.lowroom
             desiredfloortemp  = hsetup.lowfloor
             return
@@ -265,25 +240,7 @@ def parseHomeTopics(data):
 
     id = data['id']
 
-    if id == 'awhightemp': # got high temperature schedule
-        print(datetime.utcnow(),"got high temp hours")
-        hitemphours.clear()
-        for hitemprec in data['values']:
-            hitemphours.append(hitemprec['time'])
-            print(datetime.utcnow(),"added",hitemprec['time'],"to hightemp array")
-        desiredTemperatures()
-
-
-    if id == 'awlowtemp': # got low temperature schedule
-        print(datetime.utcnow(),"got low temp hours")
-        lotemphours.clear()
-        for lotemprec in data['values']:
-            lotemphours.append(lotemprec['time'])
-            print(datetime.utcnow(),"added",lotemprec['time'],"to low array")
-        desiredTemperatures()
-
-
-    elif id == 'heatpumpsetup':
+    if id == 'heatpumpsetup':
         print(datetime.utcnow(),"got heatpumpsetup")
         hsetup.lowroom     = getJsonNumericVar(data, 'lowroomtemp',  hsetup.lowroom)
         hsetup.normroom    = getJsonNumericVar(data, 'normroomtemp', hsetup.normroom)
@@ -301,12 +258,18 @@ def parseHomeTopics(data):
 
     elif id == 'elprice':
         print(datetime.utcnow(),"got elprice")
-        current_date = datetime.utcnow().strftime("%Y%m%d%H")
-        if (current_date != data['day']):
+        now = int(time.time())
+        now = int(now / 900) * 900 # round timestamp to last quart
+        current_quart = datetime.utcfromtimestamp(now).strftime("%Y%m%d%H%M")
+
+        if (current_quart != data['day']):
             publishError("datetime", 1001, "current prices timestamp is not valid:" + data['day'])
             print(datetime.utcnow(),"current prices timestamp is not valid")
+            priceState = 'normal'
         else:
             taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
+            priceState = data['pricestate']
+
         desiredTemperatures()
 
 
@@ -396,7 +359,7 @@ def on_connect(client, userdata, flags, rc):
             (mqtt_broker.topic_prefix + "/+/setup",     0),
             (mqtt_broker.topic_prefix + "/elprice/awhightemp",0),
             (mqtt_broker.topic_prefix + "/elprice/awlowtemp", 0),
-            (mqtt_broker.topic_prefix + "/elprice/current",   0),
+            (mqtt_broker.topic_prefix + "/elprice/currentquart", 0),
             ("ems-esp/boiler_data",                           0),
             ("ems-esp/thermostat_data",                       0)
         ]

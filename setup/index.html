@@ -76,7 +76,7 @@
         console.log("<---- connected ---->")
         mqtt.subscribe("home/kallio/heating/setup", {qos: 0});
         mqtt.subscribe("home/kallio/relay/+/shelly1/state");
-        mqtt.subscribe("home/kallio/elprice/current");
+        mqtt.subscribe("home/kallio/elprice/currentquart");
         mqtt.subscribe("home/kallio/phase/all/elproduction");
         mqtt.subscribe("home/kallio/error/#");
         mqtt.subscribe("home/kallio/devices/5bcae4");

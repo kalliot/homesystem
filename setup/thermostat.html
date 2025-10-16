@@ -160,7 +160,7 @@
         // Connection succeeded; subscribe to our topic
         console.log("connected");
         mqtt.subscribe("home/kallio/devices/" + myDevice , {qos: 0});
-        mqtt.subscribe("home/kallio/elprice/current", {qos: 0});
+        mqtt.subscribe("home/kallio/elprice/currentquart", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/setup/#", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/parameters/#", {qos: 0});
         mqtt.subscribe("home/kallio/thermostat/" + myDevice + "/tempsensors", {qos: 0});

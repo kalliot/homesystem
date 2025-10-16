@@ -29,10 +29,12 @@ class ElPrice:
         self.taxedprice = price
 
     def setValues(self, sellprice, taxedprice, day):
-        current_date = datetime.utcnow().strftime("%Y%m%d%H")
-        if current_date != day:
+        now = int(time.time())
+        now = int(now / 900) * 900 # round timestamp to last quart
+        current_quart = datetime.utcfromtimestamp(now).strftime("%Y%m%d%H%M")
+        if current_quart != day:
             publishError("datetime", 1001, "current prices timestamp is not valid:" + day)
-            print(datetime.utcnow(),"current prices timestamp is not valid")
+            print(datetime.utcnow(),"current prices timestamp is not valid", day, "vs", current_quart)
         else:
             self.receivedTs = int(time.time())
             self.sellprice = sellprice
@@ -42,7 +44,7 @@ class ElPrice:
         sampleDiff = now - self.receivedTs
         if sampleDiff > 4000:
             if self.errReported == False:
-                print("Is electricity price is not received", sampleDiff, "seconds since last update.")
+                print("Electricity price is not received", sampleDiff, "seconds since last update.")
                 publishError("elprice", 3007, "background pricereader fault.")
                 self.sellprice = self.defaultPrice
                 self.taxedprice = self.defaultPrice
@@ -95,7 +97,7 @@ class DsSensor:
         self.temperature = -273
         self.diff = 0 # difference to previous sample
         self.timediff = 0
-        self.normalinterval = 20 * 60 # sud be at least 15 minutes
+        self.normalinterval = 35 * 60 # sud be at least 15 minutes
         self.id = id
         self.name = name
 
@@ -264,7 +266,7 @@ class Heaters:
         for relay in self.relays:
             diff = now - relay.pendingTs
             if relay.changePending and diff > 3: # normally relay replies in less than 20 milliseconds
-                print(datetime.utcnow(),'relay', relay.name, 'is not alive.','changediff is', diff)
+                print(datetime.utcnow(),'relay', relay.name, 'number',relay.relay ,'is not alive.','changediff is', diff)
                 publishError("relay", 3003, "remote relay " + relay.name + " is not alive.")
 
     def changedByNumber(self, number, state):
@@ -524,7 +526,7 @@ def on_connect(client, userdata, flags, rc):
                 (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
                 (mqtt_broker.topic_prefix + "/heating/setup",0),
                 (mqtt_broker.topic_prefix + "/devices/" + boilertempreader,0),
-                (mqtt_broker.topic_prefix + "/elprice/current",0),
+                (mqtt_broker.topic_prefix + "/elprice/currentquart",0),
                 (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
                 (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve,0),
                 (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
