@@ -18,7 +18,7 @@ from setup import *
 
 
 def saveData(recData):
-    storage = "testing"
+    storage = "forever"
 
     client = influxdb_client.InfluxDBClient(
         url=influx_credentials.url,
@@ -27,14 +27,14 @@ def saveData(recData):
     )
 
     ts = int(recData['ts'])
-    if recData['id'] == "hourlycalc":
-        tag = "hourly"
+    if recData['id'] == "quartcalc":
+        tag = "quart"
         pointname   = 'calcsum' 
-        name        = 'hourly'
+        name        = 'quart'
         solarw      = int(recData['solarW'])
         soldw       = int(recData['soldW'])
-        hourlyCents   = float(recData['cents'])
         creditedw   = int(recData['creditedW'])
+        soldCents  = float(recData['soldCents'])
         creditedCents  = float(recData['creditedCents'])
         
         write_api = client.write_api(write_options=SYNCHRONOUS)
@@ -50,6 +50,30 @@ def saveData(recData):
 
     elif recData['id'] == "dailycalc":
         tag = "daily"
+        pointname   = 'calcsum'
+        name        = 'daily'
+        solarw      = int(recData['solarW'])
+        soldw       = int(recData['soldW'])
+        creditedw   = int(recData['creditedW'])
+        creditedEur  = round(float(recData['creditedCents']) / 100,4)
+        heatOilEur  = round(float(recData['heatOilCents'])  / 100, 4)
+        soldEur = round(float(recData['heatOilCents'])  / 100, 4)
+        soldEur  = round(float(recData['soldCents'])  / 100, 4)
+        consumedEur  = round(float(recData['consumedCents'])  / 100, 4)
+
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        p = influxdb_client.Point(pointname).tag("name",name)
+        p.time(1000 * ts,write_precision=WritePrecision.MS)
+        p.field("solarw", solarw)
+        p.field("soldw", soldw)
+        p.field("soldEur", soldEur)
+        p.field("creditedw", creditedw)
+        p.field("creditedEur", creditedEur)
+        p.field("heatOilEur", heatOilEur)
+        p.field("soldEur", soldEur)
+        p.field("consumedEur", consumedEur)
+
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
     else:
         return    
 
@@ -76,7 +100,7 @@ def on_message(client, userdata, message):
 def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
-        client.subscribe(mqtt_broker.topic_prefix + "/calculations/hourly")
+        client.subscribe(mqtt_broker.topic_prefix + "/calculations/quart")
         client.subscribe(mqtt_broker.topic_prefix + "/calculations/daily")
         connected = True
     else:

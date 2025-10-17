@@ -49,7 +49,7 @@ def saveData(recData):
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), temperature)
 
         write_api = client.write_api(write_options=SYNCHRONOUS)
-        p = influxdb_client.Point("refrigerator").tag("name","temperature").field(recData['friendlyname'], temperature).time(ts,write_precision=WritePrecision.S)
+        p = influxdb_client.Point("refrigerator").tag("name","temperature").field(recData['name'], temperature).time(ts,write_precision=WritePrecision.S)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
     if recData['id'] == "targettemp":

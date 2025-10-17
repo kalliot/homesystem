@@ -14,7 +14,7 @@ import paho.mqtt.client as mqtt
 sys.path.insert(1, '/home/pi/config')
 from setup import nordpool, mqtt_broker
 
-pricelimit = 1.0 # if no setup is got, this is so low, that no boosthours are generated
+pricelimit = 1.0 # if no setup is got, this is so low, that no boostquarts are generated
 compressor_pricelimit = 1.0
 priceratio = 0.95
 
@@ -24,18 +24,18 @@ class priceStats:
         self.max  = -20
         self.avg  = 0
 
-        hourCnt = 0
+        qCnt = 0
         cnt = 0
         sum = 0
         now = int(time.time())
         # first find out min,max and avg from those which are not overpriced.
-        for hour in data:
-            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if ((ts % 3600 == 0) and ts > (now - start * 3600)):
-                hourCnt += 1
-                if hourCnt > maxcnt:
+        for quart in data:
+            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+            if (ts > (now - start * 3600)):
+                qCnt += 1
+                if qCnt > maxcnt:
                     break
-                price = round(float(hour['PriceWithTax']) * 100, 2)
+                price = round(float(quart['PriceWithTax']) * 100, 2)
                 cnt += 1
                 sum = sum + price
                 if (price < self.min):
@@ -90,9 +90,9 @@ def publishError(code, reason):
 
 def strTime(dateTime):
     ts = int(datetime.fromisoformat(dateTime).timestamp())
-    return datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H")
+    return datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H%M")
 
-class specialHour():
+class specialQuart():
     def __init__(self, name):
         self.name = name
         self.times = []
@@ -147,109 +147,45 @@ class specialHour():
                 return
 
 
-    def publish(self):
-        topic = mqtt_broker.topic_prefix + "/elprice/" + self.name
-        result = {
-                    "id": self.name, "ts": int(time.time()), "values": [
-                        {"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(self.tstamps, self.times, self.prices, self.reasons)
-                    ]
-                }
-        client.publish(topic, json.dumps(result), qos=0, retain=True)
-
-cheapHours     = specialHour("awhightemp")
-expensiveHours = specialHour("awlowtemp")
+cheapQuarts     = specialQuart("awhightemp")
+expensiveQuarts = specialQuart("awlowtemp")
 
 
-def findCheapHoursByRank(data, maxrank):
+def findCheapQuartsByRank(data, maxrank):
     now = int(time.time())
 
-    for hour in data:
-        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if ((ts % 3600 == 0) and ts > (now - 3 * 3600)):
-            rank = int(hour['Rank'])
+    for quart in data:
+        ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+        if (ts > (now - 3 * 3600)):
+            rank = int(quart['Rank'])
 
             if rank < maxrank +1:
-                price = round(float(hour['PriceWithTax']) * 100.0,2)
-                cheapHours.addRec(strTime(hour['DateTime']),price,'cheaprank',ts)
-                print("adding cheap hour",hour['DateTime'], "by rank, price is", price)
+                price = round(float(quart['PriceWithTax']) * 100.0,2)
+                cheapQuarts.addRec(strTime(quart['DateTime']),price,'cheaprank',ts)
+                print("adding cheap quart",quart['DateTime'], "by rank, price is", price)
 
 
-def findExpensiveHoursByRank(data, minrank):
+def findExpensiveQuartsByRank(data, minrank):
     now = int(time.time())
 
-    for hour in data:
-        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if ((ts % 3600 == 0) and ts > (now - 3 * 3600)):
-            rank = int(hour['Rank'])
+    for quart in data:
+        ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+        if (ts > (now - 3 * 3600)):
+            rank = int(quart['Rank'])
 
             if rank > minrank -1:
-                price = round(float(hour['PriceWithTax']) * 100.0,2)
-                expensiveHours.addRec(strTime(hour['DateTime']),price,'expensiverank',ts)
-                print("adding expensive hour",hour['DateTime'], "by rank, price is", price)
+                price = round(float(quart['PriceWithTax']) * 100.0,2)
+                if price > 1.0:
+                    expensiveQuarts.addRec(strTime(quart['DateTime']),price,'expensiverank',ts)
+                    print("adding expensive quart",quart['DateTime'], "by rank, price is", price)
 
 
-
-def findHeatPumpCheapHours(data):
-    global priceratio
-    adder = -0.05
-    now = int(time.time())
-
-    for i in range(6):
-        cnt     = 0
-        price   = 0.0
-        prevprice = 0.0
-        nextPriceRatio = priceratio - 0.5
-        prevPriceRatio = priceratio - 0.5
-        cheapCnt = 0
-
-        datalen = len(data)
-        print(datetime.now(),"datalen=",datalen)
-
-        for hour in data:
-            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if ((ts % 3600 == 0) and ts > (now - 5 * 3600)):
-                price = round(float(hour['PriceWithTax']) * 100.0,2)
-                if cnt < datalen-1:
-                    nextprice = round(float(data[cnt+1]['PriceWithTax']) * 100.0,2)
-                else:
-                    nextprice = price
-
-                if prevprice != 0:
-                    if price == 0:
-                        prevPriceRatio = 0.001 / prevprice
-                    else:
-                        prevPriceRatio = price /  prevprice
-
-                if nextprice != 0:
-                    if price == 0:
-                        nextPriceRatio = 0.001 / nextprice
-                    else:
-                        nextPriceRatio = price / nextprice
-
-                if prevprice + adder > price and nextprice + adder > price:  # this is a pit
-                    if (prevPriceRatio > priceratio):
-                        cheapHours.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforebottom',ts-3600)
-                    cheapHours.addRec(strTime(hour['DateTime']),price,'bottom',ts)
-                    if nextPriceRatio > priceratio and cnt+1 < datalen:
-                        cheapHours.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'afterbottom',ts+3600)
-                    cheapCnt += 1
-
-                prevprice = price
-            cnt += 1
-        if cheapCnt < 6:
-            print("cheapcount was only", cheapCnt, "breaking")
-            break
-        else:
-            adder -= 0.1
-            cheapHours.clear("cheaprank")
-
-
-def findHeatPumpExpensiveHours(data):
+def findScatteredExpensiveQuarts(data):
     global priceratio
     adder = 0.05
     now = int(time.time())
 
-    for i in range(6):
+    for i in range(32):
         cnt     = 0
         price   = 0.0
         nextPriceRatio = priceratio - 0.5
@@ -259,10 +195,10 @@ def findHeatPumpExpensiveHours(data):
         prevprice = round(float(data[0]['PriceWithTax']) * 100.0,2)
         datalen = len(data)
 
-        for hour in data:
-            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if ((ts % 3600 == 0) and ts > (now - 5 * 3600)):
-                price = round(float(hour['PriceWithTax']) * 100.0,2)
+        for quart in data:
+            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+            if ts > (now - 5 * 3600):
+                price = round(float(quart['PriceWithTax']) * 100.0,2)
                 if cnt < datalen-1:
                     nextprice = round(float(data[cnt+1]['PriceWithTax']) * 100.0,2)
                 else:
@@ -283,89 +219,99 @@ def findHeatPumpExpensiveHours(data):
                 # top of the price hill and it's neighbors.
                 if prevprice + adder < price and nextprice + adder < price:  # this is a hilltop
                     if (prevPriceRatio > priceratio):
-                        expensiveHours.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforetop',ts-3600)
-                    expensiveHours.addRec(strTime(hour['DateTime']),price,'top',ts)
+                        expensiveQuarts.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforetop',ts-900)
+                    expensiveQuarts.addRec(strTime(quart['DateTime']),price,'top',ts)
 
                     if nextPriceRatio > priceratio and cnt+1 < datalen:
-                        expensiveHours.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'aftertop',ts+3600)
+                        expensiveQuarts.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'aftertop',ts+900)
                     expensiveCnt += 1
                 prevprice = price
             cnt += 1
-        if expensiveCnt < 6:
+        if expensiveCnt < 24:
             print("expensivecount was only", expensiveCnt, "breaking")
             break
         else:
             adder += 0.1
-            expensiveHours.clear("expensiverank")
+            expensiveQuarts.clear("expensiverank")
+
+
+
+def findScatteredCheapQuarts(data):
+    global priceratio
+    adder = -0.05
+    now = int(time.time())
+
+
+    for i in range(32):
+        cnt     = 0
+        price   = 0.0
+        prevprice = 0.0
+        nextPriceRatio = priceratio - 0.5
+        prevPriceRatio = priceratio - 0.5
+        cheapCnt = 0
+
+        datalen = len(data)
+        print(datetime.now(),"datalen=",datalen)
+
+        for quart in data:
+            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+            if ts > (now - 5 * 3600):
+                price = round(float(quart['PriceWithTax']) * 100.0,2)
+                if cnt < datalen-1:
+                    nextprice = round(float(data[cnt+1]['PriceWithTax']) * 100.0,2)
+                else:
+                    nextprice = price
+
+                if prevprice != 0:
+                    if price == 0:
+                        prevPriceRatio = 0.001 / prevprice
+                    else:
+                        prevPriceRatio = price /  prevprice
+
+                if nextprice != 0:
+                    if price == 0:
+                        nextPriceRatio = 0.001 / nextprice
+                    else:
+                        nextPriceRatio = price / nextprice
+
+                if prevprice + adder > price and nextprice + adder > price:  # this is a pit
+                    if (prevPriceRatio > priceratio):
+                        cheapQuarts.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforebottom',ts-900)
+                    cheapQuarts.addRec(strTime(quart['DateTime']),price,'bottom',ts)
+                    if nextPriceRatio > priceratio and cnt+1 < datalen:
+                        cheapQuarts.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'afterbottom',ts+900)
+                    cheapCnt += 1
+
+                prevprice = price
+            cnt += 1
+        if cheapCnt < 24:
+            print("cheapcount was only", cheapCnt, "breaking")
+            break
+        else:
+            adder -= 0.1
+            cheapQuarts.clear("cheaprank")
+
 
 
 def removeDuplicates():
-    if expensiveHours.count > cheapHours.count:
-        for hour in cheapHours.times:
-            expensiveHours.delRec(hour)
+    if expensiveQuarts.count > cheapQuarts.count:
+        for quart in cheapQuarts.times:
+            expensiveQuarts.delRec(quart)
 
-    if expensiveHours.count <= cheapHours.count:
-        for hour in expensiveHours.times:
-            cheapHours.delRec(hour)
+    if expensiveQuarts.count <= cheapQuarts.count:
+        for quart in expensiveQuarts.times:
+            cheapQuarts.delRec(quart)
 
 
-def findBoostHours(data):
-    stats = priceStats(data, 1, 24)
-    hourCnt = 0
-    cnt     = 0
-    price   = 0.0
-    prevprice = 0.0
-    times, prices, reasons, tstamps = [], [], [], []
-
-    boostTopic = mqtt_broker.topic_prefix + "/elprice/boosthours"
+def findDifferencies(data):
+    stats = priceStats(data, 1, 96)
 
     print(datetime.utcnow(),"stats, min", stats.min, "max", stats.max, "avg", stats.avg)
     if stats.max - stats.min <= 2:
-        result = {"id":"boosthours", "ts": int(time.time()), "values": [{"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)]}
-        client.publish(boostTopic, json.dumps(result), qos=0, retain=True)
         return False
 
-    for hour in data:
-        ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-        if ((ts % 3600 == 0) and ts > (now - 3600)):
-            hourCnt += 1
-            if hourCnt > 24:
-                break
-            price = round(float(hour['PriceWithTax']) * 100.0,2)
-
-            # minimum is almost always acceptable
-            # it cannot be the last, because we don't yet
-            # know is it going to decrease more.
-            if price == stats.min and hourCnt < 24:
-                s = strTime(hour["DateTime"])
-                times.append(s)
-                reasons.append('min')
-                tstamps.append(ts)
-                prices.append(price)
-
-            # climbing over average level.
-            elif price > stats.avg and hourCnt > 1 and prevprice < stats.avg:
-                s = strTime(data[cnt-1]['DateTime'])
-                if not s in times:
-                    times.append(s)
-                    tstamps.append(ts)
-                    reasons.append('avg')
-                    prices.append(prevprice)
-
-            #price is increasing.
-            elif prevprice != 0 and (price / prevprice > 1.2):
-                s = strTime(data[cnt-1]['DateTime'])
-                if not s in times:
-                    times.append(s)
-                    tstamps.append(ts)
-                    reasons.append('inc')
-                    prices.append(prevprice)
-            prevprice = price
-        cnt += 1
-
-    result = {"id":"boosthours", "ts": int(time.time()), "values": [{"ts": ts, "time": t, "price": s, "reason": r} for ts, t, s, r in zip(tstamps, times, prices, reasons)]}
-    client.publish(boostTopic, json.dumps(result), qos=0, retain=True)
     return True
+
 
 def queryCloud():
 
@@ -405,46 +351,49 @@ for i in range(3):
     x = queryCloud()
 
     data = x.json()
+
     if x.status_code == 200:
         now = int(time.time())
 
-        if (findBoostHours(data)): 
-            findCheapHoursByRank(data, 4)
-            findExpensiveHoursByRank(data, 20)
-            findHeatPumpCheapHours(data)
-            findHeatPumpExpensiveHours(data)
+        if (findDifferencies(data)):
+            findCheapQuartsByRank(data, 16)     # where rank is less than 16.
+            findExpensiveQuartsByRank(data, 80) # where rank is over 80 ie 16 most expensives.
+            findScatteredCheapQuarts(data)
+            findScatteredExpensiveQuarts(data)
             removeDuplicates()
-        cheapHours.publish()
-        expensiveHours.publish()
 
 
-        for hour in data:
-            ts = int(datetime.fromisoformat(hour['DateTime']).timestamp())
-            if ((ts % 3600 == 0) and ts > now):
+        for quart in data:
+            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+            if (ts > now):
                 cnt = cnt +1
-                if (cnt > 22):
+                if (cnt > 90):
                     break
 
-                cents = round(float(hour['PriceWithTax']) * 100,2)
-                centsNoTax = round(float(hour['PriceNoTax']) * 100, 2)
-                strhour=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H")
-                topic = mqtt_broker.topic_prefix + "/elprice/" + strhour
-                day = datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H")
+                cents = round(float(quart['PriceWithTax']) * 100,2)
+                centsNoTax = round(float(quart['PriceNoTax']) * 100, 2)
+                strquart=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H%M")
+                topic = mqtt_broker.topic_prefix + "/elprice/" + strquart
+                day = datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H%M")
 
-                pricestate = 'normal'
-                for cheaptime in cheapHours.times:
-                    if cheaptime == day:
-                        pricestate = 'low'
-                        break
+                if cents == 0:
+                    pricestate = 'low'
+                else:
+                    pricestate = 'normal'
 
-                for cheaptime in expensiveHours.times:
-                    if cheaptime == day:
-                        pricestate = 'high'
-                        break
+                    for cheaptime in cheapQuarts.times:
+                        if cheaptime == day:
+                            pricestate = 'low'
+                            break
+
+                    for cheaptime in expensiveQuarts.times:
+                        if cheaptime == day:
+                            pricestate = 'high'
+                            break
 
                 send_msg = {
                         'id': 'elprice',
-                        'hour': strhour,
+                        'quart': strquart,
                         'ts': ts,
                         'day': day,
                         'pricestate': pricestate,
