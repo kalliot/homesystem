@@ -15,30 +15,24 @@ subtopic = '/calculations/'
 
 class ElProduction:
 
-    __slots__ = ('value', 'dailyWatts', 'sampleCnt', 'ts')
+    __slots__ = ('value', 'dailyWatts', 'ts')
 
     def __init__(self) -> None:
         self.value = 0
         self.dailyWatts = 0
-        self.sampleCnt = 0
         self.ts = int(time())
 
     def update(self,sample : int, ts : int) -> None:
-        self.value += sample
+        self.value = sample
         self.ts = ts
-        self.sampleCnt += 1
 
-    def hourChanged(self) -> int:
-        if self.sampleCnt != 4:
-            print(datetime.utcnow(),"Warning, not all quarterhour samples received!")
-        ret = int(self.value / self.sampleCnt)
-        self.dailyWatts += ret
-        return ret
+    def quartChanged(self) -> int:
+        self.dailyWatts += self.value
+        return self.value
 
     def reset(self, dayChanged : bool) -> None:
         self.ts = int(time())
         self.value = 0
-        self.sampleCnt = 0
 
         if dayChanged:
             self.dailyWatts = 0
@@ -49,10 +43,10 @@ class ElProduction:
 # value to previous.
 
 class SolarProduction:
-    __slots__ = ('hourlyKw', 'dailyKw', 'ts', 'prevSample')
+    __slots__ = ('quartKw', 'dailyKw', 'ts', 'prevSample')
 
     def __init__(self) -> None:
-        self.hourlyKw = 0
+        self.quartKw = 0
         self.dailyKw = 0
         self.ts = int(time())
         self.prevSample = -1
@@ -62,19 +56,19 @@ class SolarProduction:
             diff = daily - self.prevSample
             if diff < 0: # solis has started a new day.
                 self.reset()
-                self.hourlyKw = daily
+                self.quartKw = daily
             else:
-                self.hourlyKw += diff
+                self.quartKw += diff
         self.dailyKw = daily
         self.prevSample = daily
 
-    def hourChanged(self,ts : int) -> None:
-        print(datetime.utcnow(), "solis reported solar production in prev hour was", round(self.hourlyKw * 1000),"watts.")
-        self.hourlyKw = 0
+    def quartChanged(self,ts : int) -> None:
+        print(datetime.utcnow(), "solis reported solar production in prev quart was", round(self.quartKw * 1000),"watts.")
+        self.quartKw = 0
         self.ts = ts
 
     def reset(self) -> None:
-        self.hourlyKw = 0
+        self.quartKw = 0
         self.ts = int(time())
         self.dailyKw = 0
         self.prevSample = 0
@@ -129,7 +123,7 @@ class Pricing:
         return self.oilprice * 10.8 # convert to cents per kwh and consider efficiency
 
 class Consumer:
-    __slots__ = ('name', 'isElectricity', 'levels', 'power', 'basepower', 'hourlyWatts', 'dailyWatts', 'hourlyCents', 'dailyCents', 'currentLevel', 'ts', 'currentPower', 'priceFunc')
+    __slots__ = ('name', 'isElectricity', 'levels', 'power', 'basepower', 'quartWatts', 'dailyWatts', 'quartCents', 'dailyCents', 'currentLevel', 'ts', 'currentPower', 'priceFunc')
 
     def __init__(self, name : str, levels : int, power : int, basepower : int, priceFunc, isElectricity : bool=True):
         self.name = name
@@ -137,9 +131,9 @@ class Consumer:
         self.levels = levels
         self.power = power
         self.basepower = basepower
-        self.hourlyWatts = 0
+        self.quartWatts = 0
         self.dailyWatts = 0
-        self.hourlyCents = 0
+        self.quartCents = 0
         self.dailyCents = 0
         self.currentLevel = 0
         self.ts = int(time())
@@ -165,30 +159,30 @@ class Consumer:
             return
 
         self.currentLevel = level
-        self.hourlyWatts += seconds / 3600 * self.currentPower
-        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
+        self.quartWatts += seconds / 900 * self.currentPower
+        self.quartCents = self.quartWatts / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
         if self.currentPower:
             self.currentPower += self.basepower
-        print(datetime.utcnow(),self.name, "Power is", round(self.currentPower), ". Cents for current hour, so far", round(self.hourlyCents,2), ",watts", round(self.hourlyWatts))
+        print(datetime.utcnow(),self.name, "Power is", round(self.currentPower), ". Cents for current quart so far", round(self.quartCents,2), ",watts", round(self.quartWatts))
 
-    def setHourlyPower(self, watts : int, ts : int) -> None:
-        self.hourlyWatts = watts
-        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
-        self.dailyCents += self.hourlyCents
-        self.dailyWatts += self.hourlyWatts
+    def setQuartPower(self, watts : int, ts : int) -> None:
+        self.quartWatts = watts
+        self.quartCents = self.quartWatts / 1000 * self.priceFunc()
+        self.dailyCents += self.quartCents
+        self.dailyWatts += self.quartWatts
         self.ts = ts
 
-    def publishHourChange(self, ts : int) -> dict:
+    def publishQuartChange(self, ts : int) -> dict:
         typ = "el"
         if not self.isElectricity:
             typ = "oil"
 
         jsonRec = {
                 "name"    : self.name,
-                "watts"   : round(self.hourlyWatts),
-                "cents"   : round(self.hourlyCents,2),
+                "watts"   : round(self.quartWatts),
+                "cents"   : round(self.quartCents,2),
                 "type"    : typ
             }
         return jsonRec
@@ -206,26 +200,26 @@ class Consumer:
             }
         return jsonRec
 
-    def hourChanged(self,ts : int) -> None:
-        if self.power == 0: # other has 0 power. Other is updated in setHourlyPower()
+    def quartChanged(self,ts : int) -> None:
+        if self.power == 0: # other has 0 power. Other is updated in setQuartPower()
             return
 
         seconds = ts - self.ts
         if seconds < 0:
             seconds = 0
-        self.hourlyWatts += seconds / 3600 * self.currentPower
-        self.hourlyCents = self.hourlyWatts / 1000 * self.priceFunc()
-        self.dailyCents += self.hourlyCents
-        self.dailyWatts += self.hourlyWatts
-        print(datetime.utcnow(), self.name, round(self.hourlyWatts,1), "/", round(self.dailyWatts,1),"Watts. Cents tot prev hour =", round(self.hourlyCents,2), ",day", round(self.dailyCents,2))
+        self.quartWatts += seconds / 900 * self.currentPower
+        self.quartCents = self.quartWatts / 1000 * self.priceFunc()
+        self.dailyCents += self.quartCents
+        self.dailyWatts += self.quartWatts
+        print(datetime.utcnow(), self.name, round(self.quartWatts,1), "/", round(self.dailyWatts,1),"Watts. Cents tot prev quart =", round(self.quartCents,2), ",day", round(self.dailyCents,2))
 
     def reset(self, dayChanged : bool) -> None:
         if dayChanged:
             self.dailyCents = 0
             self.dailyWatts = 0
-        self.hourlyCents = 0
-        self.hourlyWatts = 0
-        self.ts = int(time()) # restart hourly second counting.
+        self.quartCents = 0
+        self.quartWatts = 0
+        self.ts = int(time()) # restart quart second counting.
 
 
 
@@ -271,9 +265,9 @@ class Consumers():
         self.dailyCreditedW += creditedW
         self.dailyCreditedCents += self.creditedCents
 
-    def hourChanged(self, ts : int) -> None:
+    def quartChanged(self, ts : int) -> None:
         for consumer in self.items:
-            consumer.hourChanged(ts)
+            consumer.quartChanged(ts)
 
     def reset(self, dayChanged) -> None:
         for consumer in self.items:
@@ -285,15 +279,15 @@ class Consumers():
             self.dailySoldCents = 0
             self.dailyCreditedCents = 0
 
-    def publishHourChange(self, ts : int) -> None:
+    def publishQuartChange(self, ts : int) -> None:
         global subtopic
         consumerArr = []
 
         for consumer in self.items:
-            consumerArr.append(consumer.publishHourChange(ts))
+            consumerArr.append(consumer.publishQuartChange(ts))
 
         jsonRec = {
-                "id"            : "hourlycalc",
+                "id"            : "quartcalc",
                 "ts"            : ts,
                 "solarW"        : self.solarW,
                 "soldW"         : self.soldW,
@@ -302,7 +296,7 @@ class Consumers():
                 "creditedCents" : round(self.creditedCents,2),
                 "consumers"     : consumerArr
             }
-        topic = mqtt_broker.topic_prefix + subtopic + "hourly"
+        topic = mqtt_broker.topic_prefix + subtopic + "quart"
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
@@ -335,11 +329,11 @@ class Consumers():
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
 
 
-    def hourlyWatts(self) -> int:
+    def quartWatts(self) -> int:
         ret = 0
         for consumer in self.items:
             if consumer.isElectricity:
-                ret += consumer.hourlyWatts
+                ret += consumer.quartWatts
         return ret
 
     def dailyWatts(self) -> int:
@@ -349,12 +343,12 @@ class Consumers():
                 ret += consumer.dailyWatts
         return ret
 
-    def hourlyCents(self) -> float:
+    def quartCents(self) -> float:
         ret = float(0.0)
 
         for consumer in self.items:
             if consumer.isElectricity:
-                ret += consumer.hourlyCents
+                ret += consumer.quartCents
         return ret
 
     def dailyCents(self):
@@ -379,7 +373,8 @@ allOther    = Consumer("other",         1,     0, 0, pricing.buyPrice)
 solar       = SolarProduction()
 elProduction  = ElProduction()
 
-hourCalcPending = False
+quartCalcPending = False
+started = int(time())
 
 consumers = Consumers((thermostat,
                        stockheater,
@@ -391,56 +386,56 @@ consumers = Consumers((thermostat,
 
 
 
-def isHourChangeReady(ts : int) -> bool:
-    global hourCalcPending
+def isQuartChangeReady(ts : int) -> bool:
+    global quartCalcPending
 
-    seconds = int(ts % 3600)
-    # we are allowed to be 15 sec before or 20 seconds after hour change.
+    seconds = int(ts % 900)
+    # we are allowed to be 15 sec before or 20 seconds after quart change.
     # this is needed, because senders clock may drift a couple of seconds.
-    if seconds > 20 and seconds < (3600 - 15):
-        hourCalcPending = False
+    if seconds > 20 and seconds < (900 - 15):
+        quartCalcPending = False
         return False
 
-    if hourCalcPending:
-        hourCalcPending = False
+    if quartCalcPending:
+        quartCalcPending = False
         return True
     else:
-        hourCalcPending = True
+        quartCalcPending = True
     return False
 
 
-def calcHourChange(newTs : int) -> None:
+def calcQuartChange(newTs : int) -> None:
     # netto is the value read from electricity meter, it can be negativi
     # or positive = production is bigger than consumption
-    netto = elProduction.hourChanged() # this comes from electricity metering
+    netto = elProduction.quartChanged() # this comes from electricity metering
     if netto > 0:
-        creditedW = round(solar.hourlyKw * 1000) - netto
-        otherConsumptionW = creditedW - consumers.hourlyWatts()
+        creditedW = round(solar.quartKw * 1000) - netto
+        otherConsumptionW = creditedW - consumers.quartWatts()
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
-        allOther.setHourlyPower(otherConsumptionW, newTs)
+        allOther.setQuartPower(otherConsumptionW, newTs)
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
         creditedCents = round((creditedW / 1000) * pricing.buyPrice(),2)
         print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
         print(datetime.utcnow(),'Sold solar production is', netto,'W,',round(pricing.sellPrice() * netto / 1000,1),'cents.')
-        consumers.totals(solar.hourlyKw , netto, creditedW)
+        consumers.totals(solar.quartKw , netto, creditedW)
     else:
         creditedW = 0
         creditedCents = 0
         # -1 * (netto -700 + 1072)
-        otherConsumptionW = round(-1 * (netto - round(solar.hourlyKw * 1000) + consumers.hourlyWatts()))
+        otherConsumptionW = round(-1 * (netto - round(solar.quartKw * 1000) + consumers.quartWatts()))
 
         # vuorokauden vaihtumisen jälkeen saattaa creditdW olla nolla mutta creditedCents positiivinen ??
-        if solar.hourlyKw != 0.0:
-            creditedW = round(solar.hourlyKw * 1000)
-            creditedCents = round(solar.hourlyKw * pricing.buyPrice(),2)
+        if solar.quartKw != 0.0:
+            creditedW = round(solar.quartKw * 1000)
+            creditedCents = round(solar.quartKw * pricing.buyPrice(),2)
 
-        consumers.totals(solar.hourlyKw , 0, creditedW)
-        allOther.setHourlyPower(otherConsumptionW, newTs)
+        consumers.totals(solar.quartKw , 0, creditedW)
+        allOther.setQuartPower(otherConsumptionW, newTs)
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
         print(datetime.utcnow(),'Credited solar production is', creditedW, 'W', creditedCents, 'cents')
-        print(datetime.utcnow(),"Known consumers consumed:",round(consumers.hourlyWatts()),"price:", round(consumers.hourlyCents(),1))
+        print(datetime.utcnow(),"Known consumers consumed:",round(consumers.quartWatts()),"price:", round(consumers.quartCents(),1))
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
-    solar.hourChanged(newTs)
+    solar.quartChanged(newTs)
 
 
 def isDayChanged(ts : int) -> bool:
@@ -449,7 +444,8 @@ def isDayChanged(ts : int) -> bool:
 
 
 def processData(mqttdata) -> None:
-    global subtopic
+    global subtopic, started
+
     arr = mqttdata.topic.split("/")
     indata = json.loads(mqttdata.payload)
     item = arr[1]
@@ -531,12 +527,12 @@ def processData(mqttdata) -> None:
             newTs = int(time())
         elProduction.update(indata['W15min'], newTs)
 
-        if isHourChangeReady(newTs):
-            print(datetime.utcnow(),"The calculations are done with buyprice", pricing.buyPrice(), "and sellprice", pricing.sellPrice())
-            calcHourChange(newTs)
-            consumers.hourChanged(newTs)
-            if elProduction.sampleCnt > 1: # prevent publish in startup
-                consumers.publishHourChange(newTs)
+        if isQuartChangeReady(newTs):
+            print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
+            calcQuartChange(newTs)
+            consumers.quartChanged(newTs)
+            if newTs - started > 15:
+                consumers.publishQuartChange(newTs)
                 consumers.publishDayChange(newTs, 'predaily')
 
             if isDayChanged(newTs):
@@ -550,18 +546,18 @@ def processData(mqttdata) -> None:
             pricing.commitPrice(newTs)
             print("---------------------------------------------------------")
 
-    # elprice/current topic changes just after the hour has been changed.
+    # elprice/current topic changes just after the quart has been changed.
     # this triggers many calculations and printing/topic updates.
     elif id == 'elprice':
         newTs = int(indata['ts'])
         pricing.update(float(indata['price']), float(indata['notax']), newTs)
 
-        if isHourChangeReady(newTs):
+        if isQuartChangeReady(newTs):
             print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
-            calcHourChange(newTs)
-            consumers.hourChanged(newTs)
-            if elProduction.sampleCnt > 1: # prevent publish in startup
-                consumers.publishHourChange(newTs)
+            calcQuartChange(newTs)
+            consumers.quartChanged(newTs)
+            if newTs - started > 15:
+                consumers.publishQuartChange(newTs)
                 consumers.publishDayChange(newTs, 'predaily')
             if isDayChanged(newTs):
                 consumers.publishDayChange(newTs,'daily')
@@ -607,7 +603,7 @@ def on_publish(client, userdata,result):
 
 msgqueue = Queue(maxsize=10)
 
-client = mqtt.Client('calculator' + str(getpid()))
+client = mqtt.Client('qcalculator' + str(getpid()))
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -629,7 +625,7 @@ topics = [(mqtt_broker.topic_prefix + subtopic + "predaily",0),
           (mqtt_broker.topic_prefix + "/phase/all/quarterhnet",0),
           (mqtt_broker.topic_prefix + "/devices/#",0),
           ("ems-esp/boiler_data",0),
-          (mqtt_broker.topic_prefix + "/elprice/current",0)]
+          (mqtt_broker.topic_prefix + "/elprice/currentquart",0)]
 client.subscribe(topics)
 
 while True:
