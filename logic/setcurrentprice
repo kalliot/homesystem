@@ -14,7 +14,7 @@ from setup import mqtt_broker
 
 
 def processData(eldata):
-    currentpricetopic = mqtt_broker.topic_prefix + "/elprice/current"
+    currentpricetopic = mqtt_broker.topic_prefix + "/elprice/currentquart"
     client.publish(currentpricetopic, eldata, qos=0, retain=True)
 
 def on_message(client, userdata, message):
@@ -39,10 +39,12 @@ def on_disconnect(client, userdata, rc):
 def on_publish(client,userdata,result):
     print("something published")
 
+now = int(time.time())
+now = int(now / 900) * 900 # round timestamp to last quart
+quart = datetime.utcfromtimestamp(now).strftime("%H%M")
+print("current quart is", quart)
 
-hour = datetime.utcnow().strftime("%H") 
-
-client = mqtt.Client("setcurrentprice") #create new instance
+client = mqtt.Client("setcurrquartprice") #create new instance
 client.on_connect = on_connect
 client.on_message=on_message
 client.on_publish=on_publish
@@ -51,7 +53,7 @@ client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60)
 print(datetime.utcnow(), "Start")
 client.loop_start()
 
-topic = mqtt_broker.topic_prefix + "/elprice/" + hour
+topic = mqtt_broker.topic_prefix + "/elprice/" + quart
 client.subscribe(topic)
 
 time.sleep(1)
