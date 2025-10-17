@@ -45,8 +45,9 @@ var mqtt;
     function onConnect() {
         // Connection succeeded; subscribe to our topic
         console.log("<---- connected ---->")
-        mqtt.subscribe("home/kallio/calculations/hourly", {qos: 0});
+        mqtt.subscribe("home/kallio/calculations/quart", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/daily", {qos: 0});
+        mqtt.subscribe("home/kallio/calculations/predaily", {qos: 0});
         $('#topic').val(topic);
     }
 
@@ -65,13 +66,15 @@ var mqtt;
         var payload = message.payloadString;
 
         const obj = JSON.parse(payload);
-        if (obj.id == "hourlycalc")
+        if (obj.id == "quartcalc")
         {
             var totalWatts = 0;
             var totalCents = 0;
+            var maxConsumerWatts = 0;
+
             const d = new Date(obj.ts * 1000);
 
-            $('#lasthour').html(d.toString());
+            $('#lastquart').html(d.getHours() + ":" + d.getMinutes());
 
             $('#solarenergy').html(obj.solarW  + ' W');
             $('#creditedW').html(obj.creditedW + ' W');
@@ -91,18 +94,57 @@ var mqtt;
                                         '<td><progress class="graph" id="progr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
                 totalWatts += consumer.watts;
                 totalCents += consumer.cents;
+                if (consumer.watts > maxConsumerWatts) maxConsumerWatts = consumer.watts;
             }
+            average = totalCents / (totalWatts / 1000);
 
             $('#consumers').append('<tr><td>Sum</td>' +
                                        '<td>' + totalWatts.toString() + '</td>' +
-                                       '<td>' + totalCents.toFixed(2).toString() + '</td></tr>');
-            $('.graph').attr('max', totalWatts);
+                                       '<td>' + totalCents.toFixed(2).toString() + '</td><td>Avg ' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
+            $('.graph').attr('max', maxConsumerWatts);
         }
+
+        if (obj.id == "predailycalc")
+        {
+            var totalWatts = 0;
+            var totalCents = 0;
+            var maxConsumerWatts = 0;
+
+            const d = new Date(obj.ts * 1000);
+            $('#dklasthour').html(d.getHours() + ":" + d.getMinutes());
+
+            $('#dksolarenergy').html(obj.solarW  + ' W');
+            $('#dkcreditedW').html(obj.creditedW + ' W');
+            $('#dkcreditedCents').html(obj.creditedCents + ' Cents');
+            $('#dksoldenergy').html(obj.soldW + ' W');
+            $('#dksoldCents').html(obj.soldCents + ' Cents');
+
+            $('#dkconsumers').empty();
+            $('#dkconsumers').append('<tr><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
+            consumerarr = obj.consumers;
+            for (consumer of consumerarr)
+            {
+                $('#dkconsumers').append('<tr><td>' + consumer.watts + '</td>' +
+                                        '<td>' + consumer.cents + '</td>' +
+                                        '<td>' +consumer.type + '</td>' +
+                                        '<td><progress class="dkgraph" id="dkprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
+                totalWatts += consumer.watts;
+                totalCents += consumer.cents;
+                if (consumer.watts > maxConsumerWatts) maxConsumerWatts = consumer.watts;
+            }
+            average = totalCents / (totalWatts / 1000);
+            $('#dkconsumers').append('<tr>' +
+                                     '<td>' + totalWatts.toString() + '</td>' +
+                                     ' <td>' + totalCents.toFixed(2).toString() + '</td><td>Avg ' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
+            $('.dkgraph').attr('max', maxConsumerWatts);
+        }
+
 
         if (obj.id == "dailycalc")
         {
             var totalWatts = 0;
             var totalCents = 0;
+            var maxConsumerWatts = 0;
 
             const d = new Date(obj.ts * 1000);
             $('#yesterday').html(d.toString());
@@ -125,12 +167,13 @@ var mqtt;
                                         '<td><progress class="dgraph" id="dprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
                 totalWatts += consumer.watts;
                 totalCents += consumer.cents;
+                if (consumer.watts > maxConsumerWatts) maxConsumerWatts = consumer.watts;
             }
+            average = totalCents / (totalWatts / 1000);
             $('#dconsumers').append('<tr><td>Sum</td>' +
                                         '<td>' + totalWatts.toString() + '</td>' +
-                                       ' <td>' + totalCents.toFixed(2).toString() + '</td></tr>');
-            $('.dgraph').attr('max', totalWatts);
-
+                                       ' <td>' + totalCents.toFixed(2).toString() + '</td><td>Avg ' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
+            $('.dgraph').attr('max', maxConsumerWatts);
         }
 
     }
@@ -145,15 +188,32 @@ var mqtt;
     <body style="background-color:rgb(35, 39, 39); color:white;">
     <h1>Calculations</h1>
     <table>
-        <tr><td>Last hour</td><td id="lasthour" colspan="3"></td></tr>
-        <tr><td>Solar energy</td><td id="solarenergy"></td></tr>
-        <tr><td>Credited energy</td><td id="creditedW"></td>Credited energy</td><td id="creditedCents"></td></tr>
-        <tr><td>Sold energy</td><td id="soldenergy"></td><td id="soldCents"></td></tr>
-    </table>
+        <tr><td>    
     
-    <br>
-    <table id="consumers">    
-    </table>
+        <table>
+            <tr><td>Last quart</td><td id="lastquart" colspan="3"></td></tr>
+            <tr><td>Solar energy</td><td id="solarenergy"></td></tr>
+            <tr><td>Credited energy</td><td id="creditedW"></td><td id="creditedCents"></td></tr>
+            <tr><td>Sold energy</td><td id="soldenergy"></td><td id="soldCents"></td></tr>
+        </table>
+
+        <br>
+        <table id="consumers"></table>
+        </td>
+
+        <td>
+        <table><td>
+            <tr><td>Today so far</td><td id="dklasthour" colspan="3"></td></tr>
+            <tr><td>Solar energy</td><td id="dksolarenergy"></td></tr>
+            <tr><td>Credited energy</td><td id="dkcreditedW"></td><td id="dkcreditedCents"></td></tr>
+            <tr><td>Sold energy</td><td id="dksoldenergy"></td><td id="dksoldCents"></td></tr>
+        </table>
+
+        <br>
+        <table id="dkconsumers"></table>
+
+    </td></tr></table>
+
 
     <br><br>
     <table>
