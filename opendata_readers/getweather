@@ -114,6 +114,25 @@ def publishError(recData):
     except:
         print("mqtt publish of error failed")
 
+def publishDayData(recData, tzoffset):
+    ts = int(recData['datetimeEpoch']) + int(3600 * tzoffset)
+
+    jsonRec = {
+        "id": "daydata",
+        "ts": ts,
+        "day": datetime.fromtimestamp(ts).strftime("%Y%m%d"),
+        "tempmax": recData['tempmax'],
+        "tempmin": recData['tempmin'],
+        "tempavg": recData['temp'],
+        "solarradiation": recData['solarradiation'],
+        "solarenergy":  recData['solarenergy'],
+        "uvindex": recData['uvindex']
+    }
+    topic = mqtt_broker.topic_prefix + "/weather/daydata"
+    msg = json.dumps(jsonRec)
+    client.publish(topic, msg, qos=0, retain=True)
+
+
 
 def publishHourData(recData, tzoffset):
     ts = int(recData['datetimeEpoch'])
@@ -161,6 +180,7 @@ for i in range(3):
 
         for day in data['days']:
             publishCelestialData(day, tzoffset)
+            publishDayData(day, tzoffset)
             for hour in day['hours']:
                 publishHourData(hour, tzoffset)
         break
