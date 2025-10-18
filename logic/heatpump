@@ -21,8 +21,6 @@ outtemp = 0.0
 auxonly = False
 priceState = 'normal'
 auxchanged = 0
-hitemphours = []
-lotemphours = []
 useboosthourstemp = 1
 taxedprice = 0.0
 lastemsdata = time.time()
@@ -117,7 +115,7 @@ cop = cop_calculator()
 def publishError(category, code, description):
 
     if client.is_connected() == False:
-        print(datetime.utcnow(),"not publishing errir message, we are not connected.")
+        print(datetime.utcnow(),"not publishing error message, we are not connected.")
         return
 
     now = int(time.time())
@@ -220,14 +218,17 @@ def desiredTemperatures():
     global desiredroomtemp, desiredfloortemp
     global auxonly, outtemp, useboosthourstemp
 
+    print(datetime.utcnow(),"auxonly=",auxonly,"outtemp=",outtemp,"useboosthourstemp=",useboosthourstemp,"priceState=", priceState)
     if auxonly == False and outtemp > useboosthourstemp and outtemp < 14: # when it is colder, this affects only for aux mix => not needed.
         if priceState == 'low':
             desiredroomtemp   = hsetup.hiroom
             desiredfloortemp  = hsetup.hifloor
+            print(datetime.utcnow(),"price is low, increasing target temperatures to",desiredroomtemp,desiredfloortemp)
             return
         elif priceState == 'high':
             desiredroomtemp   = hsetup.lowroom
             desiredfloortemp  = hsetup.lowfloor
+            print(datetime.utcnow(),"price is high, decreasing target temperatures to", desiredroomtemp, desiredfloortemp)
             return
 
     desiredroomtemp   = hsetup.normroom
@@ -236,7 +237,7 @@ def desiredTemperatures():
 
 def parseHomeTopics(data):
     global desiredroomtemp, desiredfloortemp, auxonly
-    global taxedprice, outtemp
+    global taxedprice, outtemp, priceState
 
     id = data['id']
 
