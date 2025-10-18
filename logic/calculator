@@ -23,7 +23,7 @@ class ElProduction:
         self.ts = int(time())
 
     def update(self,sample : int, ts : int) -> None:
-        self.value = sample
+        self.value = sample / 4
         self.ts = ts
 
     def quartChanged(self) -> int:
@@ -58,7 +58,7 @@ class SolarProduction:
                 self.reset()
                 self.quartKw = daily
             else:
-                self.quartKw += diff
+                self.quartKw += diff / 4
         self.dailyKw = daily
         self.prevSample = daily
 
@@ -159,7 +159,7 @@ class Consumer:
             return
 
         self.currentLevel = level
-        self.quartWatts += seconds / 900 * self.currentPower
+        self.quartWatts += seconds / 3600 * self.currentPower
         self.quartCents = self.quartWatts / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
@@ -207,7 +207,7 @@ class Consumer:
         seconds = ts - self.ts
         if seconds < 0:
             seconds = 0
-        self.quartWatts += seconds / 900 * self.currentPower
+        self.quartWatts += seconds / 3600 * self.currentPower
         self.quartCents = self.quartWatts / 1000 * self.priceFunc()
         self.dailyCents += self.quartCents
         self.dailyWatts += self.quartWatts
@@ -407,7 +407,7 @@ def isQuartChangeReady(ts : int) -> bool:
 def calcQuartChange(newTs : int) -> None:
     # netto is the value read from electricity meter, it can be negativi
     # or positive = production is bigger than consumption
-    netto = elProduction.quartChanged() # this comes from electricity metering
+    netto = elProduction.quartChanged()  # this comes from electricity metering
     if netto > 0:
         creditedW = round(solar.quartKw * 1000) - netto
         otherConsumptionW = creditedW - consumers.quartWatts()
