@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+
+from datetime import datetime
+import time
+import os
+import json
+import paho.mqtt.client as mqtt 
+from queue import Queue, Empty
+import sys
+
+sys.path.insert(1, '/home/pi/config')
+from setup import mqtt_broker
+
+shellyname = "topicforshellypmeter" # actual name is received from argv
+threshold = 10
+statsInterval = 60
+
+class powermeter:
+    def __init__(self):
+        self.ts = 0
+        self.power = 0
+        self.current = 0
+        self.voltage = 0
+        self.freq = 0
+        self.count = 0
+        self.ip = ''
+        self.rssi = ''
+
+pmeter = powermeter()
+
+
+def publishPower():
+    global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not publishing powermeter commands, we are not connected.")
+        return
+
+    msg = {
+        'id': 'pmeter',
+        'device' : shellyname,
+        'ts': pmeter.ts,
+        'freq'   : pmeter.freq, 
+        'current': pmeter.current,
+        'voltage': pmeter.voltage,
+        'power': pmeter.power
+    }
+    pmeter.count += 1
+    topic = mqtt_broker.topic_prefix + "/pmeter/" + shellyname
+    client.publish(topic,json.dumps(msg),qos=0, retain=True)
+
+# mosquitto_pub -h 192.168.101.231 -t 'shellypmminig3-heatpump/command' -m 'status_update'
+def queryStatus():
+    global shellyname
+
+    if client.is_connected() == False:
+        print(datetime.utcnow(),"not querying status, we are not connected.")
+        return
+
+    topic = shellyname +"/command"
+    client.publish(topic,'status_update')
+
+
+def publishStats():
+    global shellyname
+
+    msg = {
+        'id': 'statistics',
+        'device' : shellyname,
+        'ts': int(time.time()),
+        'count': pmeter.count,
+        'rssi': pmeter.rssi,
+        'ip': pmeter.ip
+    }
+    statisticstopic= mqtt_broker.topic_prefix +"/pmeter/" + shellyname + "/statistics"
+    client.publish(statisticstopic,json.dumps(msg),qos=0, retain=True)
+
+
+def processData(topic, payload):
+    global pmeter, threshold
+    publish = False
+    item = 'init'
+    spec = 'init'
+
+    try:
+        arr = topic.split("/")
+        item = arr[1]
+        spec = arr[2]
+    except:
+        pass
+
+    eldata = json.loads(payload)
+
+    if item == 'status':
+        if spec[:3]=='pm1':
+            if not (eldata.get("voltage") is None):
+                pmeter.voltage = eldata['voltage']
+
+            if not (eldata.get("freq") is None):
+                pmeter.freq = eldata['freq']
+        elif spec == 'wifi':
+            pmeter.ip = eldata['sta_ip']
+            pmeter.rssi = eldata['rssi']
+
+
+    elif not (eldata.get('method') is None):
+        method = eldata['method']
+        if method == 'NotifyStatus' or method == 'NotifyFullStatus':
+            params = eldata['params']
+            ts = int(params['ts'])
+            pmeter.ts = ts
+
+            try:
+                measdata = params['pm1:0']
+                if not (measdata.get("apower") is None):
+                    pow = measdata['apower']
+                    diff = abs(pow - pmeter.power)
+                    if diff >= threshold: 
+                        pmeter.power = pow
+                        publish = True
+
+                if not (measdata.get("current") is None):
+                    pmeter.current = measdata['current']
+
+                if not (measdata.get("voltage") is None):
+                    pmeter.voltage = measdata['voltage']
+
+                if not (measdata.get("freq") is None):
+                    pmeter.freq = measdata['freq']
+
+                if publish:
+                    publishPower()
+
+            except KeyError:
+                pass
+
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global shellyname
+
+    print(datetime.utcnow(),"connected, rc=", rc)
+    topics = [(shellyname + "/events/rpc",0),
+              (shellyname + "/status/#",0)]
+    client.subscribe(topics)
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+
+
+def on_publish(client, userdata,result):
+    pass
+
+if (len(sys.argv) < 3):
+    print("need shelly symbolic name and threshold (C) as parameter.")
+    print("example: ", sys.argv[0], "livingroom 10")
+    exit(1)
+else:
+    shellyname = sys.argv[1]
+    threshold  = int(sys.argv[2])
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client(shellyname + str(os.getpid()))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_publish = on_publish
+
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+waitTime=5 # first statistics after 5 sec
+prevStatisticsTS = 0
+
+while True:
+    now = int(time.time())
+    if now - prevStatisticsTS >= waitTime:
+        if client.is_connected() == True:
+            prevStatisticsTS = now
+            publishStats()
+            queryStatus()
+            waitTime = statsInterval
+
+    try:
+        data = msgqueue.get(block=True, timeout = waitTime)
+        if data is None:
+            continue
+        processData(data.topic, data.payload)
+
+    except Empty:
+        pass
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), data)
+
+    except:
+        raise        
