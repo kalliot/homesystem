@@ -23,11 +23,11 @@ class ElProduction:
         self.ts = int(time())
 
     def update(self,sample : int, ts : int) -> None:
-        self.value = sample / 4
+        self.value = sample
         self.ts = ts
 
     def quartChanged(self) -> int:
-        self.dailyWatts += self.value
+        self.dailyWatts += self.value / 4
         return self.value
 
     def reset(self, dayChanged : bool) -> None:
@@ -58,7 +58,7 @@ class SolarProduction:
                 self.reset()
                 self.quartKw = daily
             else:
-                self.quartKw += diff / 4
+                self.quartKw += diff
         self.dailyKw = daily
         self.prevSample = daily
 
@@ -146,7 +146,7 @@ class Consumer:
 
 
     def update(self, level : int, ts : int) -> None:
-        minsaveinterval = 1200 # if level is changed, save anyways
+        minsaveinterval = 60 # if level is changed, save anyways
         seconds = ts - self.ts
 
         if seconds < 0: # in start this may become negative
@@ -159,8 +159,8 @@ class Consumer:
             return
 
         self.currentLevel = level
-        self.quartWatts += seconds / 3600 * self.currentPower
-        self.quartCents = self.quartWatts / 1000 * self.priceFunc()
+        self.quartWatts += seconds / 900 * self.currentPower
+        self.quartCents = (self.quartWatts / 4) / 1000 * self.priceFunc()
         self.ts = ts
         self.currentPower = level / self.levels * self.power # in watts
         if self.currentPower:
@@ -170,8 +170,8 @@ class Consumer:
     def setQuartPower(self, watts : int, ts : int) -> None:
         self.quartWatts = watts
         self.quartCents = self.quartWatts / 1000 * self.priceFunc()
-        self.dailyCents += self.quartCents
-        self.dailyWatts += self.quartWatts
+        self.dailyCents += self.quartCents / 4
+        self.dailyWatts += self.quartWatts / 4
         self.ts = ts
 
     def publishQuartChange(self, ts : int) -> dict:
@@ -207,10 +207,10 @@ class Consumer:
         seconds = ts - self.ts
         if seconds < 0:
             seconds = 0
-        self.quartWatts += seconds / 3600 * self.currentPower
+        self.quartWatts += seconds / 900 * self.currentPower
         self.quartCents = self.quartWatts / 1000 * self.priceFunc()
-        self.dailyCents += self.quartCents
-        self.dailyWatts += self.quartWatts
+        self.dailyCents += self.quartCents / 4
+        self.dailyWatts += self.quartWatts / 4
         print(datetime.utcnow(), self.name, round(self.quartWatts,1), "/", round(self.dailyWatts,1),"Watts. Cents tot prev quart =", round(self.quartCents,2), ",day", round(self.dailyCents,2))
 
     def reset(self, dayChanged : bool) -> None:
@@ -317,7 +317,7 @@ class Consumers():
                 "id"            : prefix + "calc",
                 "ts"            : ts,
                 "solarW"        : self.dailySolarW,
-                "soldW"         : self.dailySoldW,
+                "soldW"         : round(self.dailySoldW,2),
                 "creditedW"     : self.dailyCreditedW,
                 "creditedCents" : round(self.dailyCreditedCents,2),
                 "heatOilCents"  : round(oilCents,2),
@@ -364,8 +364,9 @@ thermostat  = Consumer("thermostat",   29,   600, 0, pricing.buyPrice)
 stockheater = Consumer("stockheat",     1,  4000, 0, pricing.buyPrice)
 solheater   = Consumer("solheat",       1,  2000, 0, pricing.surplusPrice)
 storefridge = Consumer("sfridge",       1,    80, 0, pricing.buyPrice)
+carheater   = Consumer("carheater",  2000,  2000, 0, pricing.buyPrice)
 # if heatpump is on, it consumes at least 150w
-heatpump    = Consumer("heatpump",    100,  2050, 150, pricing.buyPrice)
+heatpump    = Consumer("heatpump",    100,  2050, 110, pricing.buyPrice)
 # burner will not be calculated to the sum of electricity consumers.
 burner      = Consumer("burner",        1, 20800, 0, pricing.oilPrice, False) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
 allOther    = Consumer("other",         1,     0, 0, pricing.buyPrice)
@@ -380,6 +381,7 @@ consumers = Consumers((thermostat,
                        stockheater,
                        solheater,
                        storefridge,
+                       carheater,
                        heatpump,
                        allOther,
                        burner))
@@ -409,8 +411,8 @@ def calcQuartChange(newTs : int) -> None:
     # or positive = production is bigger than consumption
     netto = elProduction.quartChanged()  # this comes from electricity metering
     if netto > 0:
-        creditedW = round(solar.quartKw * 1000) - netto
-        otherConsumptionW = creditedW - consumers.quartWatts()
+        creditedW = round(solar.quartKw * 1000 * 4) - netto
+        otherConsumptionW = creditedW - (consumers.quartWatts())
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
         allOther.setQuartPower(otherConsumptionW, newTs)
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
@@ -422,25 +424,26 @@ def calcQuartChange(newTs : int) -> None:
         creditedW = 0
         creditedCents = 0
         # -1 * (netto -700 + 1072)
-        otherConsumptionW = round(-1 * (netto - round(solar.quartKw * 1000) + consumers.quartWatts()))
+        otherConsumptionW = round(-1 * (netto - round(solar.quartKw * 1000 * 4) + consumers.quartWatts()))
+        print(datetime.utcnow(), "netto=", netto, "solar=", round(solar.quartKw * 1000 * 4), "consumers=", consumers.quartWatts())
 
         # vuorokauden vaihtumisen jälkeen saattaa creditdW olla nolla mutta creditedCents positiivinen ??
         if solar.quartKw != 0.0:
-            creditedW = round(solar.quartKw * 1000)
+            creditedW = round(solar.quartKw * 1000 * 4)
             creditedCents = round(solar.quartKw * pricing.buyPrice(),2)
 
         consumers.totals(solar.quartKw , 0, creditedW)
+        print(datetime.utcnow(),"Known consumers consumed:",round(consumers.quartWatts()),"price:", round(consumers.quartCents(),1))
         allOther.setQuartPower(otherConsumptionW, newTs)
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
         print(datetime.utcnow(),'Credited solar production is', creditedW, 'W', creditedCents, 'cents')
-        print(datetime.utcnow(),"Known consumers consumed:",round(consumers.quartWatts()),"price:", round(consumers.quartCents(),1))
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
     solar.quartChanged(newTs)
 
 
 def isDayChanged(ts : int) -> bool:
     tm = localtime(ts)
-    return tm.tm_hour == 0
+    return tm.tm_hour == 0 and tm.tm_min < 5
 
 
 def processData(mqttdata) -> None:
@@ -502,24 +505,31 @@ def processData(mqttdata) -> None:
 
     elif id == 'relay':
         contact = int(indata['contact'])
+        devname = indata['device']
         newTs = int(indata['ts'])
         if newTs == 0:
             newTs = int(time())
+        if devname == 'shelly1':
+            if contact == 0: # solar energy heating
+                state = indata['state']
+                level = 0
+                if state:
+                    level = 1
+                solheater.update(level, newTs) # solheater starts only when there is enough solar energy
 
-        if contact == 0: # solar energy heating
-            state = indata['state']
-            level = 0
-            if state:
-                level = 1
-            solheater.update(level, newTs) # solheater starts only when there is enough solar energy
-            
 
-        elif contact == 2: # stock electricity heating
-            state = indata['state']
-            level = 0
-            if state:
-                level = 1
-            stockheater.update(level, newTs)
+            elif contact == 2: # stock electricity heating
+                state = indata['state']
+                level = 0
+                if state:
+                    level = 1
+                stockheater.update(level, newTs)
+
+        elif devname == 'shellyplus1pm':
+            if contact == 0: # carheater
+                state = indata['state']
+                power = int(indata['power'])
+                carheater.update(power, newTs)
 
     elif id == 'power15min':
         newTs = int(indata['ts'])
@@ -603,7 +613,7 @@ def on_publish(client, userdata,result):
 
 msgqueue = Queue(maxsize=10)
 
-client = mqtt.Client('qcalculator' + str(getpid()))
+client = mqtt.Client('calculator' + str(getpid()))
 client.on_connect = on_connect
 client.on_message = on_message
 client.on_publish = on_publish
@@ -622,6 +632,7 @@ topics = [(mqtt_broker.topic_prefix + subtopic + "predaily",0),
           (mqtt_broker.topic_prefix + "/refrigerator/fd9030/parameters/state/#",0),
           (mqtt_broker.topic_prefix + "/110782219170385/solarpower",0),
           (mqtt_broker.topic_prefix + "/relay/+/shelly1/state",0),
+          (mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state",0),
           (mqtt_broker.topic_prefix + "/phase/all/quarterhnet",0),
           (mqtt_broker.topic_prefix + "/devices/#",0),
           ("ems-esp/boiler_data",0),
