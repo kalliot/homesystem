@@ -13,7 +13,7 @@ from setup import mqtt_broker
 
 shellyname = "topicforshellypmeter" # actual name is received from argv
 threshold = 10
-statsInterval = 60
+statsInterval = 180
 
 class powermeter:
     def __init__(self):
@@ -46,7 +46,7 @@ def publishPower():
         'power': pmeter.power
     }
     pmeter.count += 1
-    topic = mqtt_broker.topic_prefix + "/pmeter/" + shellyname
+    topic = mqtt_broker.topic_prefix + "/pmeter/" + shellyname + "/data"
     client.publish(topic,json.dumps(msg),qos=0, retain=True)
 
 # mosquitto_pub -h 192.168.101.231 -t 'shellypmminig3-heatpump/command' -m 'status_update'
@@ -98,25 +98,34 @@ def processData(topic, payload):
 
             if not (eldata.get("freq") is None):
                 pmeter.freq = eldata['freq']
+
+            if not (eldata.get("apower") is None):
+                pmeter.power = eldata['apower']
+
+            if not (eldata.get("current") is None):
+                pmeter.current = eldata['current']
+
+            publish = True
+
         elif spec == 'wifi':
             pmeter.ip = eldata['sta_ip']
             pmeter.rssi = eldata['rssi']
-
 
     elif not (eldata.get('method') is None):
         method = eldata['method']
         if method == 'NotifyStatus' or method == 'NotifyFullStatus':
             params = eldata['params']
             ts = int(params['ts'])
-            pmeter.ts = ts
 
             try:
                 measdata = params['pm1:0']
                 if not (measdata.get("apower") is None):
                     pow = measdata['apower']
                     diff = abs(pow - pmeter.power)
-                    if diff >= threshold: 
+                    tdiff = ts - pmeter.ts
+                    if (diff >= threshold) or (pow == 0 and tdiff >= statsInterval):
                         pmeter.power = pow
+                        pmeter.ts = ts
                         publish = True
 
                 if not (measdata.get("current") is None):
@@ -128,11 +137,11 @@ def processData(topic, payload):
                 if not (measdata.get("freq") is None):
                     pmeter.freq = measdata['freq']
 
-                if publish:
-                    publishPower()
-
             except KeyError:
                 pass
+
+    if publish:
+        publishPower()
 
 
 
@@ -190,6 +199,9 @@ while True:
             publishStats()
             queryStatus()
             waitTime = statsInterval
+    if (now - pmeter.ts) > (statsInterval * 1.5):
+        pmeter.ts = now
+        publishPower()
 
     try:
         data = msgqueue.get(block=True, timeout = waitTime)
@@ -198,6 +210,7 @@ while True:
         processData(data.topic, data.payload)
 
     except Empty:
+        publishPower()
         pass
 
     except KeyboardInterrupt:
