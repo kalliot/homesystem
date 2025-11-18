@@ -1,5 +1,12 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
 
+    <style>
+        .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+        .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+        .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+        .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
+    </style>
+
     <head>
         <title>Calculations</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,9 +17,10 @@
         <link rel="stylesheet" href="setup.css" type="text/css">
         <script type="text/javascript">
 
-var mqtt;
+    var mqtt;
     var reconnectTimeout = 10000;
-
+    var consumerCnt = 0;
+    const dayPrices = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
 
     function MQTTconnect() {
         mqtt = new Paho.MQTT.Client(
@@ -45,6 +53,7 @@ var mqtt;
     function onConnect() {
         // Connection succeeded; subscribe to our topic
         console.log("<---- connected ---->")
+        mqtt.subscribe("home/kallio/elprice/daystats/#", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/quart", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/daily", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/predaily", {qos: 0});
@@ -60,12 +69,72 @@ var mqtt;
         $('#errors').append("Mqtt:" + d.toLocaleString() + "connection lost\r\n"); 
     };
 
+    function interpretDailyValues(dailyAvgPrice, consumerCnt) {
+        for (var i=0; i < consumerCnt; i++)
+        {
+            id = '#apid' + i.toString();
+            cp = parseFloat($(id).text());
+            color = 'blanc';
+            if (cp < dailyAvgPrice - 0.3)
+            {
+                color = 'bleu';
+            }
+            else if (cp > dailyAvgPrice + 0.3)
+            {
+                color = 'rouge';
+            }
+            $(id).removeClass().addClass(color);
+        }
+    }
+
+    function interpretDailySum(dailyAvgPrice) {
+        cp = parseFloat($('#dailyavg').text());
+        color = 'blanc';
+        if (cp < dailyAvgPrice - 0.3)
+        {
+            color = 'bleu';
+        }
+        else if (cp > dailyAvgPrice + 0.3)
+        {
+            color = 'rouge';
+        }
+        $('#dailyavg').removeClass().addClass(color);
+
+    }
+
     function onMessageArrived(message) {
 
         var topic = message.destinationName;
         var payload = message.payloadString;
+        const d = new Date();
+        var todayNum = d.getDay();
+        var yesterdayNum = d.getDay(d.setDate(d.getDate() -1));
+        var tomorrowNum = d.getDay(d.setDate(d.getDate() +1));
 
         const obj = JSON.parse(payload);
+
+        if (obj.id == "daystats")
+        {
+            dayPrices[obj.weekday] = obj.avg + 7.35;
+            if (obj.weekday == yesterdayNum)
+            {
+                $('#davgprice').html(dayPrices[yesterdayNum].toFixed(2).toString()  + ' Cent');
+            }
+            if (obj.weekday == todayNum)
+            {
+                var msgTs = obj.ts;
+                var nowTs = Math.floor(d.getTime() / 1000);
+
+                if (Math.abs(msgTs - nowTs) < 60)
+                {
+                    console.log('received fresh daystats');
+                    $('#davgprice').html($('#cdavgprice').text());
+                    interpretDailyValues(dayPrices[yesterdayNum], consumerCnt);
+                    interpretDailySum(dayPrices[yesterdayNum]);
+                }
+                $('#cdavgprice').html(dayPrices[todayNum].toFixed(2).toString()  + ' Cent');
+            }
+        }
         if (obj.id == "quartcalc")
         {
             var totalWatts = 0;
@@ -81,7 +150,7 @@ var mqtt;
             $('#creditedCents').html(obj.creditedCents + ' Cents');
             $('#soldenergy').html(obj.soldW + ' W');
             $('#soldCents').html(obj.soldCents + ' Cents');
-
+            $('#usedqprice').html(obj.buyPrice + ' Cents');
             $('#consumers').empty();
             $('#consumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
             consumerarr = obj.consumers;
@@ -117,65 +186,110 @@ var mqtt;
             $('#dkcreditedW').html(obj.creditedW + ' W');
             $('#dkcreditedCents').html(obj.creditedCents + ' Cents');
             $('#dksoldenergy').html(obj.soldW + ' W');
-            $('#dksoldCents').html(obj.soldCents + ' Cents');
+            $('#dksoldCents').html(obj.soldCents.toFixed(2).toString() + ' Cents');
 
             $('#dkconsumers').empty();
-            $('#dkconsumers').append('<tr><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
+            $('#dkconsumers').append('<tr><th width=5>W</th><th width=5>Cents</th><th>Avg</th><th>Type</th><th>Watt graph</th></tr>');
             consumerarr = obj.consumers;
             for (consumer of consumerarr)
             {
+                avgPrice = consumer.cents / (consumer.watts / 1000)
+                color = 'blanc';
+                if (consumer.watts == 0)
+                {
+                    ap = '0'
+                }
+                else {
+                    ap = avgPrice.toFixed(2).toString()
+                    if (avgPrice < dayPrices[todayNum] - 0.3)
+                    {
+                        color = 'bleu';
+                    }
+                    else if (avgPrice > dayPrices[todayNum] + 0.3)
+                    {
+                        color = 'rouge';
+                    }
+                }
                 $('#dkconsumers').append('<tr><td>' + consumer.watts + '</td>' +
                                         '<td>' + consumer.cents + '</td>' +
+                                        '<td class="' + color + '">' + ap + '</td>' +
                                         '<td>' +consumer.type + '</td>' +
                                         '<td><progress class="dkgraph" id="dkprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
                 totalWatts += consumer.watts;
                 totalCents += consumer.cents;
                 if (consumer.watts > maxConsumerWatts) maxConsumerWatts = consumer.watts;
             }
+
+            color = 'blanc';
             average = totalCents / (totalWatts / 1000);
+            if (average < dayPrices[todayNum] - 0.3)
+            {
+                color = 'bleu';
+            }
+            else if (average > dayPrices[todayNum] + 0.3)
+            {
+                color = 'rouge';
+            }
+
             $('#dkconsumers').append('<tr>' +
                                      '<td>' + totalWatts.toString() + '</td>' +
-                                     ' <td>' + totalCents.toFixed(2).toString() + '</td><td>Avg ' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
+                                     '<td>' + totalCents.toFixed(2).toString() + '</td><<td class="' + color + '">' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
             $('.dkgraph').attr('max', maxConsumerWatts);
         }
-
 
         if (obj.id == "dailycalc")
         {
             var totalWatts = 0;
             var totalCents = 0;
             var maxConsumerWatts = 0;
+            var nd = new Date();
+            var ndNum = nd.getDay();
+            const d = new Date((obj.ts - 14400) * 1000);  // time should be yesterday
 
-            const d = new Date(obj.ts * 1000);
-            $('#yesterday').html(d.toString());
+            $('#yesterday').html(d.toString().substring(0,15));
 
             $('#dsolarenergy').html(obj.solarW  + ' W');
             $('#dcreditedW').html(obj.creditedW + ' W');
             $('#dcreditedCents').html(obj.creditedCents + ' Cents');
-            $('#dsoldenergy').html(obj.soldW + ' W');
+            $('#dsoldenergy').html(obj.soldW.toFixed(2).toString() + ' W');
             $('#dsoldCents').html(obj.soldCents + ' Cents');
 
             $('#dconsumers').empty();
-            $('#dconsumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Type</th><th>Watt graph</th></tr>');
+            $('#dconsumers').append('<tr><th>Consumer</th><th width=5>W</th><th width=5>Cents</th><th>Avg</th><th>Type</th><th>Watt graph</th></tr>');
             consumerarr = obj.consumers;
+            cindex = 0;
             for (consumer of consumerarr)
             {
+                avgPrice = consumer.cents / (consumer.watts / 1000)
+                if (consumer.watts == 0)
+                {
+                    ap = '0'
+                }
+                else {
+                    ap = avgPrice.toFixed(2).toString();
+                }
                 $('#dconsumers').append('<tr><td>' + consumer.name + '</td>'  +
                                         '<td>' + consumer.watts + '</td>' +
                                         '<td>' + consumer.cents + '</td>' +
+                                        '<td id="apid' + cindex.toString() + '">' + ap + '</td>' +
                                         '<td>' +consumer.type + '</td>' +
                                         '<td><progress class="dgraph" id="dprogr"' + consumer.name + ' value="' + consumer.watts + '" max="100"></progress></td></tr>');
+
                 totalWatts += consumer.watts;
                 totalCents += consumer.cents;
                 if (consumer.watts > maxConsumerWatts) maxConsumerWatts = consumer.watts;
+                cindex++;
             }
+            consumerCnt = cindex;
+            interpretDailyValues(dayPrices[yesterdayNum], consumerCnt);
+
             average = totalCents / (totalWatts / 1000);
             $('#dconsumers').append('<tr><td>Sum</td>' +
                                         '<td>' + totalWatts.toString() + '</td>' +
-                                       ' <td>' + totalCents.toFixed(2).toString() + '</td><td>Avg ' + average.toFixed(2).toString() + ' c/kwh</td></tr>');
+                                       ' <td>' + totalCents.toFixed(2).toString() + '</td><td id="dailyavg">' + average.toFixed(2).toString() + '</td><td>c/kwh</td></tr>');
+            interpretDailySum(dayPrices[yesterdayNum])
             $('.dgraph').attr('max', maxConsumerWatts);
         }
-
     }
 
     $(document).ready(function() {
@@ -195,6 +309,7 @@ var mqtt;
             <tr><td>Solar energy</td><td id="solarenergy"></td></tr>
             <tr><td>Credited energy</td><td id="creditedW"></td><td id="creditedCents"></td></tr>
             <tr><td>Sold energy</td><td id="soldenergy"></td><td id="soldCents"></td></tr>
+            <tr><td>Price used</td><td id="usedqprice"></td></tr>
         </table>
 
         <br>
@@ -207,6 +322,7 @@ var mqtt;
             <tr><td>Solar energy</td><td id="dksolarenergy"></td></tr>
             <tr><td>Credited energy</td><td id="dkcreditedW"></td><td id="dkcreditedCents"></td></tr>
             <tr><td>Sold energy</td><td id="dksoldenergy"></td><td id="dksoldCents"></td></tr>
+            <tr><td>Average stock price</td><td id="cdavgprice"></td></tr>
         </table>
 
         <br>
@@ -221,6 +337,7 @@ var mqtt;
         <tr><td>Solar energy</td><td id="dsolarenergy"></td></tr>
         <tr><td>Credited energy</td><td id="dcreditedW"></td>Credited energy</td><td id="dcreditedCents"></td></tr>
         <tr><td>Sold energy</td><td id="dsoldenergy"></td><td id="dsoldCents"></td></tr>
+        <tr><td>Average stock price</td><td id="davgprice"></td></tr>
     </table>
 
     <br>
