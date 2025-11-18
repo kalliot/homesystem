@@ -26,6 +26,9 @@ class ElProduction:
         self.value = sample
         self.ts = ts
 
+    def sampleAge(self) -> int:
+        return int(time()) - self.ts
+
     def quartChanged(self) -> int:
         self.dailyWatts += self.value / 4
         return self.value
@@ -294,6 +297,7 @@ class Consumers():
                 "soldCents"     : round(self.soldCents, 2),
                 "creditedW"     : self.creditedW,
                 "creditedCents" : round(self.creditedCents,2),
+                "buyPrice"      : round(pricing.buyPrice(),2),
                 "consumers"     : consumerArr
             }
         topic = mqtt_broker.topic_prefix + subtopic + "quart"
@@ -365,8 +369,7 @@ stockheater = Consumer("stockheat",     1,  4000, 0, pricing.buyPrice)
 solheater   = Consumer("solheat",       1,  2000, 0, pricing.surplusPrice)
 storefridge = Consumer("sfridge",       1,    80, 0, pricing.buyPrice)
 carheater   = Consumer("carheater",  2000,  2000, 0, pricing.buyPrice)
-# if heatpump is on, it consumes at least 150w
-heatpump    = Consumer("heatpump",    100,  2050, 110, pricing.buyPrice)
+heatpump    = Consumer("heatpump",   2000,  2000, 0, pricing.buyPrice)
 # burner will not be calculated to the sum of electricity consumers.
 burner      = Consumer("burner",        1, 20800, 0, pricing.oilPrice, False) # 0.6gal/h = 2.27L/h -> 0.92 * 2.27 * 10 -> 20.8kw/h
 allOther    = Consumer("other",         1,     0, 0, pricing.buyPrice)
@@ -416,10 +419,10 @@ def calcQuartChange(newTs : int) -> None:
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
         allOther.setQuartPower(otherConsumptionW, newTs)
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
-        creditedCents = round((creditedW / 1000) * pricing.buyPrice(),2)
+        creditedCents = round((creditedW / 4000) * pricing.buyPrice(),2)
         print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
         print(datetime.utcnow(),'Sold solar production is', netto,'W,',round(pricing.sellPrice() * netto / 1000,1),'cents.')
-        consumers.totals(solar.quartKw , netto, creditedW)
+        consumers.totals(solar.quartKw , netto, creditedW / 4)
     else:
         creditedW = 0
         creditedCents = 0
@@ -432,7 +435,7 @@ def calcQuartChange(newTs : int) -> None:
             creditedW = round(solar.quartKw * 1000 * 4)
             creditedCents = round(solar.quartKw * pricing.buyPrice(),2)
 
-        consumers.totals(solar.quartKw , 0, creditedW)
+        consumers.totals(solar.quartKw , 0, creditedW / 4)
         print(datetime.utcnow(),"Known consumers consumed:",round(consumers.quartWatts()),"price:", round(consumers.quartCents(),1))
         allOther.setQuartPower(otherConsumptionW, newTs)
         otherCents = round((otherConsumptionW / 1000) * pricing.buyPrice(),2)
@@ -449,16 +452,13 @@ def isDayChanged(ts : int) -> bool:
 def processData(mqttdata) -> None:
     global subtopic, started
 
-    arr = mqttdata.topic.split("/")
     indata = json.loads(mqttdata.payload)
-    item = arr[1]
-
-    # bosch heatpump
-    if item == "boiler_data":
-        heatpump.update(int(indata['hpcompspd']), int(time()))
-        return
 
     id = indata['id']
+    if id == 'pmeter':
+        print(datetime.utcnow(),"received heatpump power")
+        heatpump.update(int(indata['power']), int(indata['ts']))
+
     if id == 'heatsetup':
         print(datetime.utcnow(),"received prices",indata['eltransferprice'], indata['elprice'],"heatoil",indata['heatoilprice'])
         print(datetime.utcnow(), "buy commission",indata['elprice'],"sell commission",indata['elselcommission'])
@@ -564,6 +564,7 @@ def processData(mqttdata) -> None:
 
         if isQuartChangeReady(newTs):
             print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
+            print(datetime.utcnow(),"elProduction sample age is", elProduction.sampleAge(),'sec.')
             calcQuartChange(newTs)
             consumers.quartChanged(newTs)
             if newTs - started > 15:
@@ -635,7 +636,7 @@ topics = [(mqtt_broker.topic_prefix + subtopic + "predaily",0),
           (mqtt_broker.topic_prefix + "/relay/0/shellyplus1pm/state",0),
           (mqtt_broker.topic_prefix + "/phase/all/quarterhnet",0),
           (mqtt_broker.topic_prefix + "/devices/#",0),
-          ("ems-esp/boiler_data",0),
+          (mqtt_broker.topic_prefix + "/pmeter/shellypmminig3-heatpump/data",0),
           (mqtt_broker.topic_prefix + "/elprice/currentquart",0)]
 client.subscribe(topics)
 
