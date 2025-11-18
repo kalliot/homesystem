@@ -17,6 +17,7 @@ from setup import nordpool, mqtt_broker
 pricelimit = 1.0 # if no setup is got, this is so low, that no boostquarts are generated
 compressor_pricelimit = 1.0
 priceratio = 0.95
+filename = 'cloud'
 
 class priceStats:
     def __init__(self, data, start, maxcnt):
@@ -45,6 +46,64 @@ class priceStats:
 
         if sum != 0 and cnt > 0:
             self.avg = sum / cnt
+
+def dayNum(ts):
+    return int(datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%w"))
+
+
+class dayStats:
+    def __init__(self, data, tomorrow):
+        self.min  = 320
+        self.max  = -20
+        self.avg  = 0
+        self.wday = -1
+        self.available = False
+
+        qCnt = 0
+        cnt = 0
+        sum = 0
+        now = int(time.time())
+        if tomorrow == True:
+            now = now + 86400
+        self.wday = dayNum(now)
+        print("weekday is", self.wday)
+
+        # first find out min,max and avg from those which are not overpriced.
+        for quart in data:
+            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+            recDay = dayNum(ts + 7200)
+            print("recday", recDay, quart['DateTime'])
+            if self.wday == recDay:
+                qCnt += 1
+                price = round(float(quart['PriceWithTax']) * 100, 2)
+                cnt += 1
+                sum = sum + price
+                if (price < self.min):
+                    self.min = price
+                if (price > self.max):
+                    self.max = price
+
+        if sum != 0 and cnt > 0:
+            self.avg = sum / cnt
+            self.available = True
+
+
+def publisDayStats(min, max, avg, daynum):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "daystats",
+        "weekday" :      daynum,
+        "ts"      :      now,
+        "min"     :      round(min,2),
+        "max"     :      round(max,2),
+        "avg"     :      round(avg,2)
+    }
+    topic = mqtt_broker.topic_prefix + "/elprice/daystats/" + str(daynum)
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.now(),"mqtt publish daystats failed")
 
 
 
@@ -331,6 +390,10 @@ def queryCloud():
     return data
 
 
+if (len(sys.argv) < 2):
+    print("Reading spot prices from internet")
+else:
+    filename = sys.argv[1]
 
 pid = os.getpid()
 client = mqtt.Client("nordpool reader" + str(pid)) #create new instance
@@ -348,65 +411,84 @@ time.sleep(1)
 
 cnt = 0
 for i in range(3):
-    x = queryCloud()
-
-    data = x.json()
-
-    if x.status_code == 200:
-        now = int(time.time())
-
-        if (findDifferencies(data)):
-            findCheapQuartsByRank(data, 16)     # where rank is less than 16.
-            findExpensiveQuartsByRank(data, 80) # where rank is over 80 ie 16 most expensives.
-            findScatteredCheapQuarts(data)
-            findScatteredExpensiveQuarts(data)
-            removeDuplicates()
-
-
-        for quart in data:
-            ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
-            if (ts > now):
-                cnt = cnt +1
-                if (cnt > 90):
-                    break
-
-                cents = round(float(quart['PriceWithTax']) * 100,2)
-                centsNoTax = round(float(quart['PriceNoTax']) * 100, 2)
-                strquart=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H%M")
-                topic = mqtt_broker.topic_prefix + "/elprice/" + strquart
-                day = datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H%M")
-
-                if cents == 0:
-                    pricestate = 'low'
-                else:
-                    pricestate = 'normal'
-
-                    for cheaptime in cheapQuarts.times:
-                        if cheaptime == day:
-                            pricestate = 'low'
-                            break
-
-                    for cheaptime in expensiveQuarts.times:
-                        if cheaptime == day:
-                            pricestate = 'high'
-                            break
-
-                send_msg = {
-                        'id': 'elprice',
-                        'quart': strquart,
-                        'ts': ts,
-                        'day': day,
-                        'pricestate': pricestate,
-                        'price': cents,
-                        'notax': centsNoTax
-                }
-
-                msg = json.dumps(send_msg)
-                client.publish(topic, msg, qos=0, retain=True)
-        break
-
+    if filename == 'cloud':
+        x = queryCloud()
+        data = x.json()
+        if x.status_code != 200:
+            publishError(x.status_code, x.reason)
+            time.sleep(10)
+            exit(0)
     else:
-        publishError(x.status_code, x.reason)
-        time.sleep(10)
+        try:
+            file  = open(filename)
+            data = json.loads(file.read())
+
+        except FileNotFoundError:
+            print(datetime.utcnow(),"file", filename,"not found.")
+            exit(0)
+
+    now = int(time.time())
+
+    todayStats = dayStats(data, False)
+    if todayStats.available:
+        publisDayStats(todayStats.min, todayStats.max, todayStats.avg, todayStats.wday)
+        print(todayStats.min, todayStats.max, todayStats.avg)
+
+    tomorrowStats = dayStats(data, True)
+    if tomorrowStats.available:
+        publisDayStats(tomorrowStats.min, tomorrowStats.max, tomorrowStats.avg, tomorrowStats.wday)
+        print(tomorrowStats.min, tomorrowStats.max, tomorrowStats.avg)
+
+    if (findDifferencies(data)):
+        findCheapQuartsByRank(data, 16)     # where rank is less than 16.
+        findExpensiveQuartsByRank(data, 80) # where rank is over 80 ie 16 most expensives.
+        findScatteredCheapQuarts(data)
+        findScatteredExpensiveQuarts(data)
+        removeDuplicates()
+
+    for quart in data:
+        ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+        if (ts > now):
+            cnt = cnt +1
+            if (cnt > 90):
+                break
+
+            cents = round(float(quart['PriceWithTax']) * 100,2)
+            centsNoTax = round(float(quart['PriceNoTax']) * 100, 2)
+            strquart=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H%M")
+            topic = mqtt_broker.topic_prefix + "/elprice/" + strquart
+            day = datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%Y%m%d%H%M")
+
+            if cents == 0:
+                pricestate = 'low'
+            else:
+                pricestate = 'normal'
+
+                for cheaptime in cheapQuarts.times:
+                    if cheaptime == day:
+                        pricestate = 'low'
+                        break
+
+                for cheaptime in expensiveQuarts.times:
+                    if cheaptime == day:
+                        pricestate = 'high'
+                        break
+
+            send_msg = {
+                    'id': 'elprice',
+                    'quart': strquart,
+                    'ts': ts,
+                    'day': day,
+                    'pricestate': pricestate,
+                    'price': cents,
+                    'notax': centsNoTax
+            }
+
+            msg = json.dumps(send_msg)
+            if filename == 'cloud':
+                client.publish(topic, msg, qos=0, retain=True)
+            else:
+                print(topic,msg)
+    break
 
 print(datetime.utcnow(),"done.")
