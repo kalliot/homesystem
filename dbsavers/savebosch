@@ -11,6 +11,7 @@ import RPi.GPIO as GPIO
 from queue import Queue
 
 import influxdb_client
+from influxdb_client.domain.write_precision import WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
 sys.path.insert(1, '/home/pi/config')
@@ -76,6 +77,16 @@ def Json2variables(jsonData, variables):
         else:
             print(datetime.now(), "Error: unhandled variable type", variable.type,"for variable", variable.name)
 
+
+def saveConsumption(power, ts):
+    global write_api
+
+    GPIO.output(led, GPIO.LOW)
+    p = influxdb_client.Point("heatpump").tag("name","boiler")
+    p.time(int(ts), write_precision=WritePrecision.S)
+    p.field("usedpower", float(power))
+    write_api.write(bucket="weekly", org=influx_credentials.org, record=p)
+    GPIO.output(led, GPIO.HIGH)
 
 class dbvariable:
     def __init__(self, name, dispname, vartype):
@@ -201,6 +212,11 @@ def handleTopics(recData):
             mixer1.saveData(data['hc1'])
         elif not (data.get('hc2') is None):
             mixer2.saveData(data['hc2'])
+
+    elif item == "kallio":
+        data = json.loads(recData.payload)
+        if not (data.get('id') is None):
+            saveConsumption(data['power'], data['ts'])
     else:
         print(datetime.now(), item, "not handled")    
 
@@ -210,13 +226,13 @@ def on_message(client, userdata, message):
 
 
 def on_connect(client, userdata, flags, rc):
-    global connected
     if (rc==0):
-        client.subscribe("ems-esp/#")
-        connected = True
+        topics = [("ems-esp/#",0),
+                  (mqtt_broker.topic_prefix + "/pmeter/shellypmminig3-heatpump/data", 0)]
+
+        client.subscribe(topics)
     else:
         print("connection failed, rc=",rc)            
-        connected = False
 
 def on_disconnect(client, userdata, rc):
     if rc!=7:
