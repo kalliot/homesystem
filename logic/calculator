@@ -1,5 +1,13 @@
 #!/usr/bin/env python
 
+
+ # weird situation in quart:
+ # no solar production
+ # heatpump consumption = 1229
+ # total consumption = -3170
+ # other is displayed as -1229
+ # and sum is 0.
+
 from datetime import datetime
 from time import time, localtime, sleep
 import json
@@ -362,6 +370,28 @@ class Consumers():
                 ret += consumer.dailyCents
         return ret
 
+class QuartControl():
+    def __init__(self) -> None:
+        self.priceTs = 0
+        self.netTs = 0
+
+    def setPriceTs(self, ts : int) -> None:
+        print(datetime.utcnow(),'setting priceTs')
+        self.priceTs = ts
+
+    def setNetTs(self, ts : int) -> None:
+        print(datetime.utcnow(),'setting netTs')
+        self.netTs = ts
+
+    def isChanged(self) -> bool:
+        diff = abs(self.priceTs - self.netTs)
+        if diff < 20:
+            print(datetime.utcnow(),'quart change is ready, diff is', diff)
+            return True
+        return False
+
+
+quartControl = QuartControl()
 pricing = Pricing()
 # ----------------------name--------steps--power-basepwr-pricecalc ----
 thermostat  = Consumer("thermostat",   29,   600, 0, pricing.buyPrice)
@@ -388,25 +418,6 @@ consumers = Consumers((thermostat,
                        heatpump,
                        allOther,
                        burner))
-
-
-
-def isQuartChangeReady(ts : int) -> bool:
-    global quartCalcPending
-
-    seconds = int(ts % 900)
-    # we are allowed to be 15 sec before or 20 seconds after quart change.
-    # this is needed, because senders clock may drift a couple of seconds.
-    if seconds > 20 and seconds < (900 - 15):
-        quartCalcPending = False
-        return False
-
-    if quartCalcPending:
-        quartCalcPending = False
-        return True
-    else:
-        quartCalcPending = True
-    return False
 
 
 def calcQuartChange(newTs : int) -> None:
@@ -536,8 +547,9 @@ def processData(mqttdata) -> None:
         if newTs == 0:
             newTs = int(time())
         elProduction.update(indata['W15min'], newTs)
+        quartControl.setNetTs(newTs)
 
-        if isQuartChangeReady(newTs):
+        if quartControl.isChanged():
             print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
             calcQuartChange(newTs)
             consumers.quartChanged(newTs)
@@ -561,8 +573,9 @@ def processData(mqttdata) -> None:
     elif id == 'elprice':
         newTs = int(indata['ts'])
         pricing.update(float(indata['price']), float(indata['notax']), newTs)
+        quartControl.setPriceTs(newTs)
 
-        if isQuartChangeReady(newTs):
+        if quartControl.isChanged():
             print(datetime.utcnow(),"The calculations are done with buyprice", round(pricing.buyPrice(),2), "and sellprice", round(pricing.sellPrice(),2))
             print(datetime.utcnow(),"elProduction sample age is", elProduction.sampleAge(),'sec.')
             calcQuartChange(newTs)
