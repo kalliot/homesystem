@@ -21,6 +21,9 @@
     var reconnectTimeout = 10000;
     var consumerCnt = 0;
     const dayPrices = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+    const started = new Date();
+    var calcTs = Math.floor(started.getTime() / 1000);
+    var priceExtra = 0; // what is added to stock price, to get final price. Typically transfer price + buy commission.
 
     function MQTTconnect() {
         mqtt = new Paho.MQTT.Client(
@@ -53,6 +56,7 @@
     function onConnect() {
         // Connection succeeded; subscribe to our topic
         console.log("<---- connected ---->")
+        mqtt.subscribe("home/kallio/heating/setup", {qos: 0});
         mqtt.subscribe("home/kallio/elprice/daystats/#", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/quart", {qos: 0});
         mqtt.subscribe("home/kallio/calculations/daily", {qos: 0});
@@ -113,9 +117,20 @@
 
         const obj = JSON.parse(payload);
 
+        if (obj.id == "heatsetup")
+        {
+            priceExtra = obj.elprice + obj.eltransferprice;
+        }
         if (obj.id == "daystats")
         {
-            dayPrices[obj.weekday] = obj.avg + 7.35;
+            var color = 'blanc';
+            if (calcTs < obj.ts - 86400)
+            {
+                color = 'rouge';
+            }
+            $('#yesterday').removeClass().addClass(color);
+
+            dayPrices[obj.weekday] = obj.avg + priceExtra;
             if (obj.weekday == yesterdayNum)
             {
                 $('#davgprice').html(dayPrices[yesterdayNum].toFixed(2).toString()  + ' Cent');
@@ -142,6 +157,8 @@
             var maxConsumerWatts = 0;
 
             const d = new Date(obj.ts * 1000);
+
+            calcTs = obj.ts;
 
             $('#lastquart').html(d.getHours() + ":" + d.getMinutes());
 
