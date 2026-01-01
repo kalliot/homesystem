@@ -29,10 +29,16 @@ def saveData(recData):
 
         ts = int(recData['ts'])
         cents = float(recData['price'])
+        pricestate = recData['pricestate']
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), cents)
 
         write_api = client.write_api(write_options=SYNCHRONOUS)
-        p = influxdb_client.Point("euros").tag("name","elprice").field("price", cents).time(1000 * ts,write_precision=WritePrecision.MS)
+        p = influxdb_client.Point("euros").tag("name","elprice")
+        p.field("price", cents).time(1000 * ts,write_precision=WritePrecision.MS)
+        if pricestate == "high":
+            p.field("high", 2).time(1000 * ts,write_precision=WritePrecision.MS)
+        elif pricestate == "low":
+            p.field("low", 2).time(1000 * ts,write_precision=WritePrecision.MS)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
 
