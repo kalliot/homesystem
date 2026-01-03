@@ -46,19 +46,19 @@ def relayState(state):
 
 
 def handleButton(data):
-    action = data['action']
+    if not (data.get('action') is None):
+        action = data['action']
 
-    if action == "single":
-        print(datetime.now(), "Relay on")
-        relayState(True)
+        if action == "single":
+            print(datetime.now(), "Relay on")
+            relayState(True)
 
-    if action == "double":        
-        print(datetime.now(), "Relay off")
-        relayState(False)
+        if action == "double":
+            print(datetime.now(), "Relay off")
+            relayState(False)
 
 
 def handleCube(data):
-
     action = 'none'
     if not (data.get('action') is None):
         action = data['action']
