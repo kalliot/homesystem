@@ -1,0 +1,242 @@
+#!/usr/bin/env python
+
+
+from datetime import datetime
+import paho.mqtt.client as mqtt 
+import os
+import time
+import json
+import sys
+from queue import Queue, Empty
+
+shellyname = "yardlights"
+
+setuppath= '/home/pi/config'
+if len(sys.argv) == 2:
+    setuppath = sys.argv[1]
+    print("using setup path", setuppath)
+
+sys.path.insert(1, setuppath)
+from setup import mqtt_broker
+
+
+# open / close the safe lock
+def setSafeState(state):
+    global shellyname
+
+    relaymsg = {
+        'id': 20,
+        'src': shellyname + '/relayreply',
+        'method':'Switch.Set',
+        'params': {
+                'id':0,
+                'on':state
+            }
+    }
+    setrelaytopic= shellyname + "/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+
+
+# report the process of key resolve
+def publishOpeningState(index, keylen):
+    global mqtt_broker
+
+    now = int(time.time())
+    statemsg = {
+        'id': 'safestate',
+        'ts': now,
+        'index': index,
+        'keylen' : keylen
+    }
+    topic = mqtt_broker.topic_prefix + "/safestate/state"
+    print(datetime.utcnow(), "changing safe state", topic, json.dumps(statemsg))
+    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+
+def publishFailed(index, keylen, side):
+    global mqtt_broker
+
+    now = int(time.time())
+    statemsg = {
+        'id': 'failed',
+        'ts': now,
+        'index': index,
+        'side' : side,
+        'keylen' : keylen
+    }
+    topic = mqtt_broker.topic_prefix + "/safestate/state"
+    print(datetime.utcnow(), "failed", topic, json.dumps(statemsg))
+    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+
+def publishOpened():
+    global mqtt_broker
+
+    now = int(time.time())
+    statemsg = {
+        'id': 'opened',
+        'ts': now
+    }
+    topic = mqtt_broker.topic_prefix + "/safestate/state"
+    print(datetime.utcnow(), "opened", topic, json.dumps(statemsg))
+    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+
+
+# report reset of key resolving.
+def publishClosed():
+    global mqtt_broker
+
+    now = int(time.time())
+    statemsg = {
+        'id': 'closed',
+        'ts': now,
+    }
+    topic = mqtt_broker.topic_prefix + "/safestate/state"
+    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+
+
+class StrongBox:
+    def __init__(self, secretCode):
+        self.secretCode = secretCode
+        self.codeLen = len(secretCode)
+        self.index = 0
+        self.lastSide = -1
+        self.state = True
+
+    def reset(self):
+        self.index = 0
+        self.state = True
+        publishClosed()
+        setSafeState(False)
+
+    def rotate(self, right, side):
+        print(datetime.now(), "rotated, right=", right,"side=",side)
+
+    def flip(self, side):
+        print(datetime.now(), "turned")
+        self.lastSide = side
+        if self.state:
+            verify = int(self.secretCode[self.index:self.index+1])
+            print(datetime.now(), "Verifying, is side", side, "same as", verify)
+            if verify == side:
+                if self.index == self.codeLen - 1:
+                    self.index = self.index + 1
+                    publishOpeningState(self.index, self.codeLen)
+                    setSafeState(True)
+                    publishOpened()
+                    self.state = False
+                else:
+                    self.index = self.index + 1
+                    publishOpeningState(self.index, self.codeLen)
+            else:
+                publishFailed(self.index, self.codeLen, side)
+                self.state = False
+            
+        else:
+            print(datetime.now(), "You have to reset!")
+
+def handleButton(data):
+    if not (data.get('action') is None):
+        action = data['action']
+
+        if action == "double":
+            strongBox.reset()
+
+        elif action == "single":        
+            setSafeState(True)
+            publishOpened()
+
+
+def handleCube(data):
+    if not (data.get('action') is None):
+        action = data['action']
+
+        if action == "tap":
+            side = int(data['side'])
+            if side == 4:
+                print(datetime.now(), "Reset code lock")
+                strongBox.reset()
+
+        elif action == "flip90":
+            side = int(data['action_side'])
+            print(datetime.now(), "flip to side", side)
+            strongBox.flip(side)
+
+        elif action == "rotate_right":
+            side = int(data['side'])
+            strongBox.rotate(True, side)
+
+        elif action == "rotate_left":
+            side = int(data['side'])
+            strongBox.rotate(False, side)
+
+        elif action == "slide":
+            side = int(data['side'])
+
+def handleTopics(recData):
+    arr = recData.topic.split("/")
+    item = arr[1]
+
+    if item == "Cube":
+        data = json.loads(recData.payload)
+        handleCube(data)
+
+    elif item == "lockbutton":
+        data = json.loads(recData.payload)
+        handleButton(data)
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global connected
+    if (rc==0):
+        client.subscribe("zigbee2mqtt/#")
+        connected = True
+    else:
+        print("connection failed, rc=",rc)            
+        connected = False
+
+def on_disconnect(client, userdata, rc):
+    if rc!=7:
+        try:
+            client.reconnect()
+        except:
+            print(datetime.now(),"reconnect failed, waiting...")
+            time.sleep(30)
+        
+    else:
+        time.sleep(30)
+
+
+strongBox = StrongBox('013')
+msgqueue = Queue(maxsize=10)    
+pid = os.getpid()
+
+
+client = mqtt.Client("codelock:" + str(pid))
+client.on_connect = on_connect
+client.on_message = on_message
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60) 
+print(datetime.now(), "Start")
+client.loop_start()
+
+
+while (True):
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        handleTopics(data)
+        sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        client.loop_stop()
+        exit(0)
+
+    except Empty:
+        pass
+
+    except:
+        raise
