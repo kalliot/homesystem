@@ -1,0 +1,154 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+   <style>
+      .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+      .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+      .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+      .verte {background-color: rgb(7, 53, 1); color: rgb(216, 253, 168)}
+      .blanc {background-color: rgb(39, 38, 38); color: rgb(253, 253, 253)}
+   </style>   
+
+  <head>
+    <title id="myTitle">Pakomielle</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    
+    <script src="config.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="setup.css" type="text/css">
+    <script type="text/javascript">
+    var mqtt;
+    var reconnectTimeout = 10000;
+    var myDevice = "none";
+    var myType = "none";
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("connected, myDevice is", myDevice);
+        mqtt.subscribe("pakomielle/#", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+    
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+
+        if (obj.id == "setup")
+        {
+            $('#secret').html(obj.secret);
+            $('#secret_table td').remove();
+            for (let i=0; i < obj.secret.length; i++)
+            {
+                $("#secret_table").append('<td id="sec' + i.toString() +  '">' + obj.secret.charAt(i) + '</td>');
+            }
+        }
+        if (obj.id == "closed")
+        {
+            $('#state').html(obj.id)
+            $('#state').attr("class", "rouge");
+            len = $('#secret').html().length;
+            for (let i=0; i < len; i++)
+            {
+                id = "#sec" + i.toString();
+                $(id).attr("class", "blanc");
+            }
+        }
+        if (obj.id == "opened")
+        {
+            $('#state').html(obj.id)
+            $('#state').attr("class", "verte");
+        }
+        if (obj.id == "failed")
+        {
+            $('#state').html(obj.id)
+        }
+        if (obj.id == "safestate")
+        {
+            $('#progress').html(obj.index)
+            index = obj.index - 1;
+            id = "#sec" + index.toString();
+            $(id).attr("class", "rouge");
+        }
+    };
+
+
+    $(document).ready(function() {
+        myDevice = (new URL(location.href)).searchParams.get('dev');
+        myType = (new URL(location.href)).searchParams.get('type');
+        console.log(myDevice);
+        MQTTconnect();
+    });
+
+    function setSecret()
+    {
+        code = $('#secret').val();
+        content='{"id": "setsetup", "secret":"' + code + '"}';
+        console.log("sending",content);
+        mqtt.send("pakomielle/setsetup", content, 0 , false);
+    }
+
+    </script>
+  </head>
+  <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1 id="heading">Pakomielle codelock</h1>
+    <div>
+        <form>
+            <table>
+                <tr><td><input type="text" id="secret" size=5></td></tr>
+                <tr><td><button type="button" onClick="setSecret()">Set code</button></td></tr>
+            </table>
+        </form>
+        <table>
+            <tr><td>Progress</td><td id="progress">Init</td><td><table id="secret_table"></table></td></tr>
+            <tr><td>State</td><td id="state">Init</td></tr>
+        </table>
+        
+    </div>
+  </body>
+</html>
+
+
+	
+
+   
+
+	
