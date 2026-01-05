@@ -37,6 +37,7 @@ def setSafeState(state):
     client.publish(setrelaytopic,json.dumps(relaymsg))
 
 
+
 # report the process of key resolve
 def publishOpeningState(index, keylen):
     global mqtt_broker
@@ -50,7 +51,7 @@ def publishOpeningState(index, keylen):
     }
     topic = mqtt_broker.topic_prefix + "/safestate/state"
     print(datetime.utcnow(), "changing safe state", topic, json.dumps(statemsg))
-    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+    client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
 
 def publishFailed(index, keylen, side):
     global mqtt_broker
@@ -65,7 +66,7 @@ def publishFailed(index, keylen, side):
     }
     topic = mqtt_broker.topic_prefix + "/safestate/state"
     print(datetime.utcnow(), "failed", topic, json.dumps(statemsg))
-    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+    client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
 
 def publishOpened():
     global mqtt_broker
@@ -77,7 +78,7 @@ def publishOpened():
     }
     topic = mqtt_broker.topic_prefix + "/safestate/state"
     print(datetime.utcnow(), "opened", topic, json.dumps(statemsg))
-    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+    client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
 
 
 # report reset of key resolving.
@@ -90,7 +91,7 @@ def publishClosed():
         'ts': now,
     }
     topic = mqtt_broker.topic_prefix + "/safestate/state"
-    client.publish(topic,json.dumps(statemsg), qos=0) # important: dont use retain flag.
+    client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
 
 
 class StrongBox:
@@ -106,6 +107,13 @@ class StrongBox:
         self.state = True
         publishClosed()
         setSafeState(False)
+
+    def setSecret(self, newSecret):
+        self.secretCode = newSecret
+        self.codeLen = len(newSecret)
+        self.index = 0
+        self.lastSide = -1
+        self.state = True
 
     def rotate(self, right, side):
         print(datetime.now(), "rotated, right=", right,"side=",side)
@@ -133,6 +141,26 @@ class StrongBox:
         else:
             print(datetime.now(), "You have to reset!")
 
+def publishSetup():
+    global mqtt_broker
+
+    now = int(time.time())
+    msg = {
+        'id': 'setup',
+        'ts': now,
+        'secret': strongBox.secretCode
+    }
+    topic = mqtt_broker.topic_prefix + "/setup"
+    client.publish(topic,json.dumps(msg), qos=0, retain=True)
+
+def handleSetup(data):
+    id = data['id']
+    if id == 'setsetup':
+        secret = data['secret']
+        print(datetime.now(), "Received a new secret:", secret)
+        strongBox.setSecret(secret)
+        publishSetup()
+
 def handleButton(data):
     if not (data.get('action') is None):
         action = data['action']
@@ -151,6 +179,7 @@ def handleCube(data):
 
         if action == "tap":
             side = int(data['side'])
+            print(datetime.now(), "Tap, side", side)
             if side == 4:
                 print(datetime.now(), "Reset code lock")
                 strongBox.reset()
@@ -183,6 +212,10 @@ def handleTopics(recData):
         data = json.loads(recData.payload)
         handleButton(data)
 
+    elif arr[0] == mqtt_broker.topic_prefix:
+        data = json.loads(recData.payload)
+        handleSetup(data)
+
 def on_message(client, userdata, message):
     msgqueue.put(message)
 
@@ -191,9 +224,11 @@ def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
         client.subscribe("zigbee2mqtt/#")
+        client.subscribe(mqtt_broker.topic_prefix + "/setsetup")
+        publishSetup()
         connected = True
     else:
-        print("connection failed, rc=",rc)            
+        print("connection failed, rc=",rc)
         connected = False
 
 def on_disconnect(client, userdata, rc):
