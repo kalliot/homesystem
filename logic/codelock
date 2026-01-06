@@ -161,6 +161,13 @@ def handleSetup(data):
         strongBox.setSecret(secret)
         publishSetup()
 
+    elif id == 'open':
+        setSafeState(True)
+        publishOpened()
+
+    elif id == 'close':
+        strongBox.reset()
+
 def handleButton(data):
     if not (data.get('action') is None):
         action = data['action']
@@ -224,7 +231,7 @@ def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
         client.subscribe("zigbee2mqtt/#")
-        client.subscribe(mqtt_broker.topic_prefix + "/setsetup")
+        client.subscribe(mqtt_broker.topic_prefix + "/set")
         publishSetup()
         connected = True
     else:
