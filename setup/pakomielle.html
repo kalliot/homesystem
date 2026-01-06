@@ -123,8 +123,21 @@
         code = $('#secret').val();
         content='{"id": "setsetup", "secret":"' + code + '"}';
         console.log("sending",content);
-        mqtt.send("pakomielle/setsetup", content, 0 , false);
+        mqtt.send("pakomielle/set", content, 0 , false);
     }
+
+    function closeLock()
+    {
+        content='{"id": "close"}';
+        mqtt.send("pakomielle/set", content, 0 , false);
+    }
+
+    function openLock()
+    {
+        content='{"id": "open"}';
+        mqtt.send("pakomielle/set", content, 0 , false);
+    }
+
 
     </script>
   </head>
@@ -133,8 +146,10 @@
     <div>
         <form>
             <table>
-                <tr><td><input type="text" id="secret" size=5></td></tr>
-                <tr><td><button type="button" onClick="setSecret()">Set code</button></td></tr>
+                <tr><td><input type="text" id="secret" size=5></td>
+                    <td><button type="button" onClick="setSecret()">Set code</button></td></tr>
+                <tr><td><button type="button" onClick="openLock()">Open</button></td>
+                     <td><button type="button" onClick="closeLock()">Close</button></td></tr>
             </table>
         </form>
         <table>
