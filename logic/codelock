@@ -68,26 +68,14 @@ def publishFailed(index, keylen, side):
     print(datetime.utcnow(), "failed", topic, json.dumps(statemsg))
     client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
 
-def publishOpened():
-    global mqtt_broker
-
-    now = int(time.time())
-    statemsg = {
-        'id': 'opened',
-        'ts': now
-    }
-    topic = mqtt_broker.topic_prefix + "/safestate/state"
-    print(datetime.utcnow(), "opened", topic, json.dumps(statemsg))
-    client.publish(topic,json.dumps(statemsg), qos=0, retain=True)
-
 
 # report reset of key resolving.
-def publishClosed():
+def publishState(state):
     global mqtt_broker
 
     now = int(time.time())
     statemsg = {
-        'id': 'closed',
+        'id': state,
         'ts': now,
     }
     topic = mqtt_broker.topic_prefix + "/safestate/state"
@@ -105,7 +93,7 @@ class StrongBox:
     def reset(self):
         self.index = 0
         self.state = True
-        publishClosed()
+        publishState('closed')
         setSafeState(False)
 
     def setSecret(self, newSecret):
@@ -129,7 +117,7 @@ class StrongBox:
                     self.index = self.index + 1
                     publishOpeningState(self.index, self.codeLen)
                     setSafeState(True)
-                    publishOpened()
+                    publishState('opened')
                     self.state = False
                 else:
                     self.index = self.index + 1
@@ -163,10 +151,23 @@ def handleSetup(data):
 
     elif id == 'open':
         setSafeState(True)
-        publishOpened()
+        publishState('opened')
 
     elif id == 'close':
         strongBox.reset()
+
+def handleShelly(data):
+    if not (data.get('output') is None):
+        if data['output'] == False:
+            strongBox.index = 0
+            strongBox.state = True
+            publishState('closed')
+
+        elif data['output'] == True:
+            strongBox.index = 0
+            strongBox.state = True
+            publishState('opened')
+
 
 def handleButton(data):
     if not (data.get('action') is None):
@@ -177,7 +178,7 @@ def handleButton(data):
 
         elif action == "single":        
             setSafeState(True)
-            publishOpened()
+            publishState('opened')
 
 
 def handleCube(data):
@@ -223,6 +224,10 @@ def handleTopics(recData):
         data = json.loads(recData.payload)
         handleSetup(data)
 
+    elif arr[0] == shellyname and arr[1] == "status":
+        data = json.loads(recData.payload)
+        handleShelly(data)
+
 def on_message(client, userdata, message):
     msgqueue.put(message)
 
@@ -231,7 +236,9 @@ def on_connect(client, userdata, flags, rc):
     global connected
     if (rc==0):
         client.subscribe("zigbee2mqtt/#")
+        client.subscribe(shellyname + "/status/#")
         client.subscribe(mqtt_broker.topic_prefix + "/set")
+        client.subscribe(mqtt_broker.topic_prefix + "/setup")
         publishSetup()
         connected = True
     else:

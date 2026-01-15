@@ -83,7 +83,8 @@
         }
         if (obj.id == "closed")
         {
-            $('#state').html(obj.id)
+            $('#progress').html("lukittu")
+            $('#state').html("lukossa")
             $('#state').attr("class", "rouge");
             len = $('#secret').html().length;
             for (let i=0; i < len; i++)
@@ -94,16 +95,19 @@
         }
         if (obj.id == "opened")
         {
-            $('#state').html(obj.id)
+            $('#progress').html("avattu")
+            $('#state').html("avoinna")
             $('#state').attr("class", "verte");
         }
         if (obj.id == "failed")
         {
-            $('#state').html(obj.id)
+            $('#progress').html("virheellinen koodi")
+            $('#state').html("lukossa")
         }
         if (obj.id == "safestate")
         {
-            $('#progress').html(obj.index)
+            $('#progress').html("flip")
+            $('#state').html("lukossa")
             index = obj.index - 1;
             id = "#sec" + index.toString();
             $(id).attr("class", "rouge");
@@ -123,7 +127,7 @@
         code = $('#secret').val();
         content='{"id": "setsetup", "secret":"' + code + '"}';
         console.log("sending",content);
-        mqtt.send("pakomielle/set", content, 0 , false);
+        mqtt.send("pakomielle/set", content, 0 , true);
     }
 
     function closeLock()
@@ -142,19 +146,19 @@
     </script>
   </head>
   <body style="background-color:rgb(35, 39, 39); color:white;">
-    <h1 id="heading">Pakomielle codelock</h1>
+    <h1 id="heading">Koodilukko</h1>
     <div>
         <form>
             <table>
                 <tr><td><input type="text" id="secret" size=5></td>
-                    <td><button type="button" onClick="setSecret()">Set code</button></td></tr>
-                <tr><td><button type="button" onClick="openLock()">Open</button></td>
-                     <td><button type="button" onClick="closeLock()">Close</button></td></tr>
+                    <td><button type="button" onClick="setSecret()">Aseta koodi</button></td></tr>
+                <tr><td><button type="button" onClick="openLock()">Avaa</button></td>
+                     <td><button type="button" onClick="closeLock()">Sulje</button></td></tr>
             </table>
         </form>
         <table>
-            <tr><td>Progress</td><td id="progress">Init</td><td><table id="secret_table"></table></td></tr>
-            <tr><td>State</td><td id="state">Init</td></tr>
+            <tr><td>Status</td><td id="progress">Init</td><td><table id="secret_table"></table></td></tr>
+            <tr><td>Lukko</td><td id="state">Init</td></tr>
         </table>
         
     </div>
