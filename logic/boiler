@@ -14,7 +14,7 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 shellynumber = 1
-burner_max_preheat = 900
+burner_max_preheat = 300
 elhysteresis = 200
 flameburning = False
 magnetvalve = "33"
@@ -253,7 +253,7 @@ class heater:
         setrelaytopic = mqtt_broker.topic_prefix + "/relay/shelly" + str(self.shellynumber) + "/setstate"
         self.changePending = True
         self.pendingTs = now
-        client.publish(setrelaytopic,json.dumps(relaymsg), qos=0, retain=True)
+        client.publish(setrelaytopic,json.dumps(relaymsg), qos=1, retain=True)
         print(datetime.utcnow(),setrelaytopic,json.dumps(relaymsg))
 
 
@@ -329,6 +329,24 @@ def publishError(category, code, description):
         "description" :  description
     }
     topic = mqtt_broker.topic_prefix + "/error/relay/boiler" 
+    try:
+        client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+    except:
+        print(datetime.utcnow(), "mqtt publish of error failed")
+
+
+def publishAlarm(state, dev, description):
+    now = int(time.time())
+
+    jsonRec = {
+        "id"      :      "alarm",
+        "dev"     :      dev,
+        "source"  :      "boiler",
+        "ts"      :      now,
+        "state"   :      state,
+        "description" :  description
+    }
+    topic = mqtt_broker.topic_prefix + "/boiler/alarm/" + dev
     try:
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
@@ -445,6 +463,7 @@ def processData(eldata):
                     if burner.faultstate == True:
                         print(datetime.utcnow(),"burner faultstate cancelled.")
                         burner.faultstate = False
+                        publishAlarm(False,"burner","oil burner started")
             else:
                 if burner.state == False:
                     print(datetime.utcnow(),"burner stopped successfully")
@@ -523,12 +542,12 @@ def on_connect(client, userdata, flags, rc):
 
     if (rc==0):
         topics = [
-                (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 0),
+                (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 1), 
                 (mqtt_broker.topic_prefix + "/heating/setup",0),
                 (mqtt_broker.topic_prefix + "/devices/" + boilertempreader,0),
                 (mqtt_broker.topic_prefix + "/elprice/currentquart",0),
                 (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
-                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve,0),
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve, 0),   # TODO: qos sud be 1
                 (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
         ]
         client.subscribe(topics)
@@ -569,6 +588,7 @@ while True:
     if burner.state == True and flameburning == False and diff > burner_max_preheat and center.isValid(now) and center.temperature < burner.lowtemp:
         if burner.faultstate == False:
             publishError("burner", 3001, "Burner fault or magnetvalve sensor fault. Preheat started " + str(diff) + " seconds ago.")
+            publishAlarm(True, "burner", "oil burner fault")
             print(datetime.utcnow(),"oil burner has not started")
         burner.faultstate = True
 
