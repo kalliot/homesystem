@@ -91,7 +91,7 @@ def setRelay(num, state):
 
     relaymsg = {
         'id': 20,
-        'src': mqtt_broker.topic_prefix + '/relayreply',
+        'src': mqtt_broker.topic_prefix + '/relayreply', # TODO: be more specific here.
         'method':'Switch.Set',
         'params': {
                 'id':num,
@@ -213,7 +213,7 @@ client.loop_start()
 
 topics = [(mqtt_broker.topic_prefix + "/relay/" + shellyname + "/setstate",1),
           (shellyname + "/events/rpc",1)]
-client.subscribe(topics)
+client.subscribe(topics) # TODO: this should be in connect handler
 
 waitTime=5 # first statistics after 5 sec
 prevStatisticsTS = 0
