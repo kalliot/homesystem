@@ -106,9 +106,16 @@ class DsSensor:
         self.timediff = ts - self.datats
         self.datats = ts
         self.diff = temperature - self.temperature # positive when temperature is increasing
-        self.temperature = temperature
+        if err == 0:
+            self.temperature = temperature
+
         if self.errstate != 0 and err == 0:
             publishError("burner", 3004, "temperature sensor: " + self.name + " is OK.")
+            publishAlarm(False, self.name, "temperature sensor is alive")
+        elif self.errstate == 0 and err != 0:
+            publishError("burner", 3004, "temperature sensor: " + self.name + " is not working.")
+            publishAlarm(True, self.name, "bad temperature reading")
+
         self.errstate = err 
 
     def isValid(self, now):
@@ -137,14 +144,13 @@ class TempSensors:
             for sensor in self.sensors:
                 if not sensor.isValid(now):
                     print(datetime.utcnow(),'sensor', sensor.name, 'is not valid')
-                    publishError("burner", 3002, "temperature sensor: " + sensor.name + " is not working.")
-                    ret = False
                     failCnt += 1
         return failCnt == totalCnt
 
     def setAllToState(self, state):
         for sensor in self.sensors:
             sensor.errstate = state
+            publishAlarm(state, sensor.name, "sensor reset.")
         
 
 
@@ -210,17 +216,21 @@ class heater:
         self.changets = int(time.time())
         self.pendingTs = self.changets
         self.state = False
-        self.pendingState = False
+        self.pendingState = False # Is the state in pending: relay on / off
         self.boosted = False
         self.faultstate = False
-        self.changePending = False
+        self.changePending = False # are we waiting relay to change its state
 
     # changed is used when we receive a message from relay. NOT in anywhere else
     def _changed(self, newState):
         now = int(time.time())
-        if newState == self.pendingState and self.changePending:
-            print(datetime.utcnow(),'relay', self.name, 'resetting changePending.')
+
+        if self.changePending:
+            if newState == self.pendingState:
+                print(datetime.utcnow(),'relay', self.name, 'resetting changePending.')
+            publishAlarm(False, self.name, "relay " + self.name + " is OK.")
             self.changePending = False
+
         self.state = newState
         self.changets = now
 
@@ -232,9 +242,9 @@ class heater:
         diff = now - self.pendingTs
 
         if self.changePending:
-            if diff < 3:
+            if diff < 5:
                  if self.pendingState == newState:
-                    return
+                    return # dont send if prev send is not acknowledged
             else:
                 print(datetime.utcnow(),'relay', self.name, 'is not replying')
 
@@ -265,15 +275,20 @@ class Heaters:
     def verify(self, now):
         for relay in self.relays:
             diff = now - relay.pendingTs
-            if relay.changePending and diff > 3: # normally relay replies in less than 20 milliseconds
+            if relay.changePending and diff > 5: # normally relay replies in less than 20 milliseconds
                 print(datetime.utcnow(),'relay', relay.name, 'number',relay.relay ,'is not alive.','changediff is', diff)
                 publishError("relay", 3003, "remote relay " + relay.name + " is not alive.")
+                publishAlarm(True, relay.name, "relay " + relay.name + " is not alive.")
 
     def changedByNumber(self, number, state):
         for relay in self.relays:
             if relay.relay == number:
                 print(datetime.utcnow(), "received relay msg, setting", relay.name, "to", state)
                 relay._changed(state)
+
+    def setAlarms(self, state):
+        for relay in self.relays:
+            publishAlarm(state, relay.name, "Alarm reset.")
 
 electricity = Electricity(200,-5000) 
 hsetup = heatSetup()
@@ -462,8 +477,8 @@ def processData(eldata):
                     print(datetime.utcnow(),"burner preheat took", diff, "seconds.")
                     if burner.faultstate == True:
                         print(datetime.utcnow(),"burner faultstate cancelled.")
-                        burner.faultstate = False
                         publishAlarm(False,"burner","oil burner started")
+                    burner.faultstate = False
             else:
                 if burner.state == False:
                     print(datetime.utcnow(),"burner stopped successfully")
@@ -471,6 +486,7 @@ def processData(eldata):
                     diff = now - burner.changets
                     burner.faultstate = True
                     publishError("sensor", 3000, "burner stopped too early, only " + str(diff) + " seconds since preheat started.")
+                    publishAlarm(True,"burner","oil burner too early stop")
                     print(datetime.utcnow(),"burner stopped too early")
 
     if not tempSensors.isAllInitialized():
@@ -524,6 +540,7 @@ def processData(eldata):
                     burner.change(False)
 
         else: # center temperature sensor is in failure
+            # publishAlarm() is already done, when received the temperature data
             if bottom.errstate == 0:
                 if bottom.temperature <= hsetup.burnerbackupstart:
                     burner.change(True)
@@ -541,13 +558,16 @@ def on_connect(client, userdata, flags, rc):
     global mqtt_broker
 
     if (rc==0):
+        heaters.setAlarms(False)
+        tempSensors.setAllToState(False)
+
         topics = [
                 (mqtt_broker.topic_prefix + "/relay/+/shelly" + str(shellynumber) + "/state", 1), 
                 (mqtt_broker.topic_prefix + "/heating/setup",0),
                 (mqtt_broker.topic_prefix + "/devices/" + boilertempreader,0),
                 (mqtt_broker.topic_prefix + "/elprice/currentquart",0),
                 (mqtt_broker.topic_prefix + "/phase/all/elproduction",0),
-                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve, 0),   # TODO: qos sud be 1
+                (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/state/" + magnetvalve, 1),
                 (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
         ]
         client.subscribe(topics)
@@ -609,6 +629,7 @@ while True:
     except json.decoder.JSONDecodeError as e:
         print(datetime.utcnow(), "json:", e)
         print(datetime.utcnow(), data)
+
     except:
         raise        
 
