@@ -90,8 +90,8 @@ def setRelay(num, state):
     global shellyname
 
     relaymsg = {
-        'id': 20,
-        'src': mqtt_broker.topic_prefix + '/relayreply', # TODO: be more specific here.
+        'id': '20',
+        'src': mqtt_broker.topic_prefix + '/relay/' + str(rel.index) + "/" + shellyname + "/ack",
         'method':'Switch.Set',
         'params': {
                 'id':num,

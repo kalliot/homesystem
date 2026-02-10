@@ -8,10 +8,23 @@ import paho.mqtt.client as mqtt
 from queue import Queue, Empty
 import sys
 
-sys.path.insert(1, '/home/pi/config')
+shellyname = "topicforshelly1relay" # actual name is received from argv
+
+if (len(sys.argv) < 2):
+    print("need shelly symbolic name as parameter. setup path is optional")
+    print("example: ", sys.argv[0], "livingroom [/home/pi/config]")
+    exit(1)
+else:
+    shellyname = sys.argv[1]
+
+setuppath= '/home/pi/config'
+if len(sys.argv) == 3:
+    setuppath = sys.argv[2]
+    print("using setup path", setuppath)
+
+sys.path.insert(1, setuppath)
 from setup import mqtt_broker
 
-shellyname = "topicforshelly1relay" # actual name is received from argv
 statsInterval = 300
 
 class relay:
@@ -137,7 +150,10 @@ def processData(eldata):
             relays[index].state = result['output']
             temperatures = result['temperature']
             relays[index].temperature = float(temperatures['tC'])
-            relays[index].voltage = round(float(result['voltage']),1)
+            if 'voltage' not in result:
+                relays[index].voltage = 0
+            else:
+                relays[index].voltage = round(float(result['voltage']),1)
             publishRelay(relays[index])
             print(datetime.utcnow(),"relay",index,"state",result['output'], "temp",relays[index].temperature)
 
@@ -196,12 +212,6 @@ def on_publish(client, userdata,result):
     pass
 
 
-if (len(sys.argv) < 2):
-    print("need shelly symbolic name as parameter")
-    print("example: ", sys.argv[0], "livingroom")
-    exit(1)
-else:
-    shellyname = sys.argv[1]
 
 msgqueue = Queue(maxsize=10)
 

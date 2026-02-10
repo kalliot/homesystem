@@ -9,7 +9,7 @@ from datetime import timezone
 import paho.mqtt.client as mqtt 
 import sys
 
-sys.path.insert(1, '../config')
+sys.path.insert(1, '/home/pi/config')
 from setup import mqtt_broker
 
 
