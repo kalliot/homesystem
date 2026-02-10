@@ -57,12 +57,48 @@ class cop_calculator:
 
         return retcop
 
+class CopPublisher:
+    def __init__(self):
+        self.offprice = 0
+        self.onprice = 0
+        self.cop = 1
+
+    def publish(self, cop, offprice, onprice, oilprice):
+        if client.is_connected() == False:
+            print(datetime.utcnow(),"not publishing cop message, we are not connected.")
+            return
+
+        if self.offprice != offprice or self.onprice != onprice or self.cop != cop:
+            now = int(time.time())
+
+            jsonRec = {
+                "id"      : "cop",
+                "dev"     : "heatpump",
+                "ts"      :  now,
+                "cop"     :  cop,
+                "offprice":  offprice,
+                "onprice" :  onprice,
+                "oilprice":  oilprice
+            }
+            topic = mqtt_broker.topic_prefix + "/heatpump/cop"
+            try:
+                client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
+            except:
+                print(datetime.utcnow(), "mqtt publish of cop failed")
+
+            self.cop = cop
+            self.onprice = onprice
+            self.offprice = offprice
+
+
 
 class temperature:
-    def __init__(self, topic):
+    def __init__(self, topic, minInterval):
         self.topic = topic
         self.changed = 0
         self.value = 0
+        self.minInterval = minInterval
+        self.changed = (int(time.time()) - minInterval) + 60 # can be changed one minute after start
 
     def set(self, val):
         if self.value != val:
@@ -81,7 +117,7 @@ class temperature:
 
         now = int(time.time())
         diff = now - self.changed
-        if diff < 1800:
+        if diff < self.minInterval:
             print(datetime.utcnow(),"prev change in topic",self.topic,"is too fresh,",diff, "not changing")
             return
 
@@ -107,9 +143,10 @@ class heatSetup:
 
 
 hsetup = heatSetup()
-floortemp = temperature('ems-esp/thermostat/hc2/seltemp')
-roomtemp = temperature('ems-esp/thermostat/seltemp')
+floortemp = temperature('ems-esp/thermostat/hc2/seltemp', 900)
+roomtemp = temperature('ems-esp/thermostat/seltemp', 900)
 cop = cop_calculator()
+copPublisher = CopPublisher()
 
 
 def publishError(category, code, description):
@@ -133,6 +170,7 @@ def publishError(category, code, description):
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
         print(datetime.utcnow(), "mqtt publish of error failed")
+
 
 
 def getJsonVar(source, name, defvalue):
@@ -173,7 +211,7 @@ def setAuxHeater(state):
 
     now = time.time()
     diff = now - auxchanged
-    if diff < 1800:
+    if diff < 3600:
         print(datetime.utcnow(),"Auxonly change is too fresh:", diff)
         return
     topic = "ems-esp/boiler/auxheateronly"
@@ -275,7 +313,7 @@ def parseHomeTopics(data):
 
 
 def tuneCompressor():
-    global taxedprice, outtemp, desiredfloortemp, desiredroomtemp
+    global taxedprice, outtemp, desiredfloortemp, desiredroomtemp, heatpump_min_temp, heatpump_restore_temp
     ret = False
 
     if roomtemp.value == 0:
@@ -286,11 +324,13 @@ def tuneCompressor():
         return True
 
     if hsetup.eltype == 'stock':
-        compressorHysteresis = 0.5
+        compressorHysteresis = 1.0
         nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice, 2)
         burnerprice = round(hsetup.heatoilprice * 10.8, 2) # changing Euros/litre to cents/kW. Multiplier is 10.8 instead of 10, because efficiency is about 92%
-        compressorOffPrice = round(nettoprice / cop.get(outtemp),2)
+        offCop = cop.get(outtemp)
+        compressorOffPrice = round(nettoprice / offCop,2)
         compressorOnPrice = round(nettoprice / cop.get(outtemp + compressorHysteresis),2)
+        copPublisher.publish(round(offCop,2), compressorOffPrice, compressorOnPrice, burnerprice)
         if burnerprice < compressorOffPrice:
             if setAuxHeater(True):
                 print(datetime.utcnow(), "Burner price is now enough low:",burnerprice, "compared to compressor price",compressorOffPrice,". We just burn heatoil.")
