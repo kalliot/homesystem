@@ -306,7 +306,7 @@ def parseHomeTopics(data):
             print(datetime.utcnow(),"current prices timestamp is not valid")
             priceState = 'normal'
         else:
-            taxedprice = round(getJsonNumericVar(data, 'price', taxedprice))
+            taxedprice = round(getJsonNumericVar(data, 'avgprice', taxedprice))
             priceState = data['pricestate']
 
         desiredTemperatures()
@@ -324,7 +324,7 @@ def tuneCompressor():
         return True
 
     if hsetup.eltype == 'stock':
-        compressorHysteresis = 1.0
+        compressorHysteresis = 2.0
         nettoprice = round(taxedprice + hsetup.elprice + hsetup.transferprice, 2)
         burnerprice = round(hsetup.heatoilprice * 10.8, 2) # changing Euros/litre to cents/kW. Multiplier is 10.8 instead of 10, because efficiency is about 92%
         offCop = cop.get(outtemp)
