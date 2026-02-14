@@ -209,6 +209,9 @@ class specialQuart():
 cheapQuarts     = specialQuart("awhightemp")
 expensiveQuarts = specialQuart("awlowtemp")
 
+def avgPrice(prev, current, next):
+    return round((prev + current + next) / 3, 2)
+
 
 def findCheapQuartsByRank(data, maxrank):
     now = int(time.time())
@@ -226,6 +229,7 @@ def findCheapQuartsByRank(data, maxrank):
 
 def findExpensiveQuartsByRank(data, minrank):
     now = int(time.time())
+    prevPrice = 0
 
     for quart in data:
         ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
@@ -300,6 +304,7 @@ def findScatteredCheapQuarts(data):
     adder = -0.05
     now = int(time.time())
 
+    stats = priceStats(data, 1, 96)
 
     for i in range(32):
         cnt     = 0
@@ -334,11 +339,21 @@ def findScatteredCheapQuarts(data):
                         nextPriceRatio = price / nextprice
 
                 if prevprice + adder > price and nextprice + adder > price:  # this is a pit
-                    if (prevPriceRatio > priceratio):
-                        cheapQuarts.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforebottom',ts-900)
-                    cheapQuarts.addRec(strTime(quart['DateTime']),price,'bottom',ts)
+                    if prevPriceRatio > priceratio:
+                        if prevprice < stats.avg:
+                            cheapQuarts.addRec(strTime(data[cnt-1]['DateTime']),prevprice,'beforebottom',ts-900)
+                        else:
+                            print(datetime.now(),"not lowprice", prevprice, "vs avg", stats.avg)
+                    if price < stats.avg:
+                        cheapQuarts.addRec(strTime(quart['DateTime']),price, 'bottom',ts)
+                    else:
+                        print(datetime.now(),"not lowprice", price, "vs avg", stats.avg)
+
                     if nextPriceRatio > priceratio and cnt+1 < datalen:
-                        cheapQuarts.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'afterbottom',ts+900)
+                        if nextprice < stats.avg:
+                            cheapQuarts.addRec(strTime(data[cnt+1]['DateTime']),nextprice,'afterbottom',ts+900)
+                        else:
+                            print(datetime.now(),"not lowprice", nextprice, "vs avg", stats.avg)
                     cheapCnt += 1
 
                 prevprice = price
@@ -394,6 +409,7 @@ if (len(sys.argv) < 2):
     print("Reading spot prices from internet")
 else:
     filename = sys.argv[1]
+    print("Reading spot prices from file", filename)
 
 pid = os.getpid()
 client = mqtt.Client("nordpool reader" + str(pid)) #create new instance
@@ -446,14 +462,22 @@ for i in range(3):
         findScatteredExpensiveQuarts(data)
         removeDuplicates()
 
-    for quart in data:
+    cents = 0
+    arrayLen = len(data)
+    for ind, quart in enumerate(data):
+        prevCents = cents
         ts = int(datetime.fromisoformat(quart['DateTime']).timestamp())
+        cents = round(float(quart['PriceWithTax']) * 100,2)
+        if ind < arrayLen-1:
+            nextQuart = data[ind+1]
+
+        nextCents = round(float(nextQuart['PriceWithTax']) * 100.0,2)
         if (ts > now):
             cnt = cnt +1
             if (cnt > 90):
                 break
 
-            cents = round(float(quart['PriceWithTax']) * 100,2)
+            avgCents = avgPrice(prevCents, cents, nextCents)
             centsNoTax = round(float(quart['PriceNoTax']) * 100, 2)
             strquart=datetime.fromtimestamp(ts).astimezone(pytz.UTC).strftime("%H%M")
             topic = mqtt_broker.topic_prefix + "/elprice/" + strquart
@@ -481,6 +505,7 @@ for i in range(3):
                     'day': day,
                     'pricestate': pricestate,
                     'price': cents,
+                    'avgprice' : avgCents,
                     'notax': centsNoTax
             }
 
