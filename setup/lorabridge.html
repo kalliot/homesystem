@@ -1,0 +1,219 @@
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <title>Lorabridge setup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="mqttws31.js" type="text/javascript"></script>
+    <script src="jquery.min.js" type="text/javascript"></script>
+    
+    <script src="config.js" type="text/javascript"></script>
+    <link rel="stylesheet" href="setup.css" type="text/css">
+    <script type="text/javascript">
+    var mqtt;
+    var reconnectTimeout = 10000;
+    var myDevice = "none";
+
+
+    function MQTTconnect() {
+        mqtt = new Paho.MQTT.Client(
+                        host,
+                        port,
+                        "web_" + parseInt(Math.random() * 100,
+                        10));
+        var options = {
+            timeout: 3,
+            useSSL: useTLS,
+            cleanSession: false,
+            onSuccess: onConnect,
+            onFailure: function (message) {
+                $('#status').val("Connection failed: " + message.errorMessage + "Retrying");
+                setTimeout(MQTTconnect, reconnectTimeout);
+            }
+        };
+
+        mqtt.onConnectionLost = onConnectionLost;
+        mqtt.onMessageArrived = onMessageArrived;
+
+        if (username != null) {
+            options.userName = username;
+            options.password = password;
+        }
+        console.log("Host="+ host + ", port=" + port + " TLS = " + useTLS + " username=" + username + " password=" + password);
+        mqtt.connect(options);
+    }
+
+
+    function sendsetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "setup"' +
+                  ',"pairingallowed":' + $('#temperature').val() + '}';
+
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+    function setRuntime(clientid)
+    {
+        console.log('clientid = ' + clientid);
+
+        name = $('#n' + clientid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "setruntime"' + 
+              ',"msg":{"dev":"' + clientid + '"}}';
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
+        return false;
+    }
+
+
+    function setfriendlyname(clientid)
+    {
+        console.log('clientid = ' + clientid);
+
+        name = $('#n' + clientid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "setname"' + 
+              ',"msg":{"dev":"' + clientid + 
+              '","name":"' + name + '"}}';
+
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
+        return false;
+    }
+
+
+
+    function onConnect() {
+        // Connection succeeded; subscribe to our topic
+        console.log("connected, myDevice is ", myDevice);
+        mqtt.subscribe("home/kallio/lorabridge/" + myDevice + "/devices", {qos: 0});
+        mqtt.subscribe("home/kallio/lorabridge/" + myDevice + "/loradata/#", {qos: 0});
+    }
+
+
+    function onConnectionLost(response) {
+        console.log("connection lost");
+        setTimeout(MQTTconnect, reconnectTimeout);
+    };
+
+
+    function timeredFunc(id, temperature)
+    {
+        $(id).html(temperature);
+    }
+
+    function formatTime(number)
+    {
+        return number < 10 ? '0' + number : number;
+    }
+
+    function onMessageArrived(message) {
+
+        var topic = message.destinationName;
+        var payload = message.payloadString;
+    
+        const obj = JSON.parse(payload);
+
+        if (obj.dev != myDevice) return;
+        if (obj.id == "loradata")
+        {
+            console.log("got loradata");
+            const d = new Date(obj.ts * 1000);
+            month      = formatTime(d.getMonth()+1);
+            day        = formatTime(d.getDate()+1);
+            hours      = formatTime(d.getHours());
+            minutes    = formatTime(d.getMinutes());
+            seconds    = formatTime(d.getSeconds());
+            activetime = `${day}.${month} ${hours}:${minutes}:${seconds}`;
+
+            $('#act'  + obj.data.dev).html(activetime);
+            $('#batt' + obj.data.dev).html(obj.data.batt);
+            $('#rssi' + obj.data.dev).html(obj.data.rssi);
+            $('#snr'  +  obj.data.dev).html(obj.data.snr);
+            $('#pwr'  +  obj.data.dev).html(obj.data.power);
+            $('#aint' +  obj.data.dev).html(obj.ts - $('#pts'  +  obj.data.dev).html());
+            $('#pts'  +  obj.data.dev).html(obj.ts);
+            
+        }
+        else if (obj.id == "devices")
+        {
+            $('#clients tbody').empty(); // remove lines from friendlyname table, otherwise its appended every time.
+            console.log("got devices");
+            devicearr = obj.items;
+            for (device of devicearr)
+            {
+                len = $("#F" + device.addr).length;
+                console.log("length is ", len);
+
+                console.log("got device " + device.addr);
+                if (len == 0)
+                {
+                    $('#clients').append('<tr><form id="F' + device.addr + '"><td>' + device.addr + '</td>' +
+                                         '<td><input type="text" id="n' + device.addr + '" onFocusout=setfriendlyname("' + device.addr + '") size=10 value="' + device.name + '"/></td>' +
+                                         '<td id="act' + device.addr + '">00 00:00:00</td>' +
+                                         '<td id="batt' + device.addr + '">0</td>' +
+                                         '<td id="int' + device.addr + '">' + device.interval + '</td>' +
+                                         '<td id="aint' + device.addr + '">0</td>' +
+                                         '<td id="pair' + device.addr + '">' + device.paired + '</td>' +
+                                         '<td id="rssi' + device.addr + '">0</td>' +
+                                         '<td id="snr' + device.addr + '">0</td>' +
+                                         '<td id="pwr' + device.addr + '">0</td>' +
+                                         '<td id="pts' + device.addr + '">0</td>' +
+                                         '<td><button type="button" onClick=setRuntime("' + device.addr + '")>setRun</button></form></td></tr>');
+                }
+                else
+                {
+                    $("#n" + device.addr).val(device.name);
+                }
+                $('#pts' +  device.addr).hide();
+            }
+        }
+        else
+        {
+            console.log("unknown message id "+ obj.id);
+        }
+    };
+
+
+    $(document).ready(function() {
+        myDevice = (new URL(location.href)).searchParams.get('dev');
+        console.log(myDevice);
+        MQTTconnect();
+    });
+
+    </script>
+  </head>
+  <body style="background-color:rgb(35, 39, 39); color:white;">
+    <h1>Lorabridge setup</h1>
+    <div>
+        <table><tr><td>
+        <form> 
+            <input type="hidden" id="id" value="setup"><br>
+            <table>
+            <tr><td><label for="pairingallowed">Pairing allowed</label></td>
+                <td><input type="text" 
+                            id="pairingallowed" 
+                            size=2/>
+                </td>
+                        
+            <tr><td><button type="button" onClick="sendsetup()">Update</button></td></tr>
+            </table>
+        </form>
+        <form> 
+            <table id="clients">
+            <tr><thead><th>client</th><th>name</th><th>active</th><th>batt</th><th>intv</th>
+                       <th>aintv</th><th>pair</th><th>rssi</th><th>snr</th><th>power</th></thead></tr>
+            </table>
+        </form>
+        </td>
+        </tr></table>
+    </div>
+  </body>
+</html>
+
+
+	
+
+   
+
+	
