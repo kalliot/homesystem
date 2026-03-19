@@ -479,15 +479,34 @@ def processData(eldata):
                         print(datetime.utcnow(),"burner faultstate cancelled.")
                         publishAlarm(False,"burner","oil burner started")
                     burner.faultstate = False
-            else:
-                if burner.state == False:
+                else:
+                    publishError("boiler", 3013, "burner started, but relay on message is missing.")
+                    burner.change(True)
+                    burner.state = True
+
+            else: # Magnetvalve tells us that burner has stopped.
+                if burner.state == False:  # we already ordered burner to stop, and we have received acknowledge from burner relay.
                     print(datetime.utcnow(),"burner stopped successfully")
                 else:
                     diff = now - burner.changets
-                    burner.faultstate = True
-                    publishError("sensor", 3000, "burner stopped too early, only " + str(diff) + " seconds since preheat started.")
-                    publishAlarm(True,"burner","oil burner too early stop")
-                    print(datetime.utcnow(),"burner stopped too early")
+                    if diff < (7 * 60): # stopped really too early, normally to reach even the starttemp takes over 9 minutes
+                        pendingDiff = now - burner.pendingTs
+                        if burner.pendingState == False and pendingDiff < 5:
+                            publishError("boiler", 3012, "got magnetvalve off before relay acknowledged.")
+                            burner.change(False)
+                            burner.state = False # this must be forced here, otherwise stockheater is activated. (stockheater is activated before we get relay reply)
+                        else:
+                            burner.faultstate = True
+                            publishError("sensor", 3000, "burner stopped too early, " + str(diff) + " seconds since preheat started.")
+                            publishAlarm(True,"burner","oil burner too early stop")
+                            print(datetime.utcnow(),"burner stopped too early")
+                    else:
+                        # maybe we did not receive relay off message ? Reset the state to off anyway, to recover.
+                        # TODO: should we also check, has boiler temperature increased from the burner start temperature?
+                        print(datetime.utcnow(),"burner stopped a bit too early, hardware thermostat too low or relay reply msg is missing.")
+                        print(datetime.utcnow(),"resetting the relay.")
+                        burner.change(False)
+                        burner.state = False # this must be forced here, otherwise stockheater is activated. (stockheater is activated before we get relay reply)
 
     if not tempSensors.isAllInitialized():
         return
