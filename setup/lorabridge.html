@@ -1,4 +1,12 @@
 <html xmlns="http://www.w3.org/1999/xhtml">
+    <style>
+        .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+        .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
+        .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
+        .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
+    </style>
+
+
   <head>
     <title>Lorabridge setup</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -65,6 +73,32 @@
         return false;
     }
 
+    function pair(clientid)
+    {
+        console.log('clientid = ' + clientid);
+
+        name = $('#n' + clientid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "pair"' +
+              ',"msg":{"dev":"' + clientid + '"}}';
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
+        return false;
+    }
+
+    function unpair(clientid)
+    {
+        console.log('clientid = ' + clientid);
+
+        name = $('#n' + clientid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "unpair"' +
+              ',"msg":{"dev":"' + clientid + '"}}';
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
+        return false;
+    }
+
 
     function setfriendlyname(clientid)
     {
@@ -72,9 +106,22 @@
 
         name = $('#n' + clientid).val();
 
-        content = '{"dev":"' + myDevice + '", "id": "setname"' + 
-              ',"msg":{"dev":"' + clientid + 
+        content = '{"dev":"' + myDevice + '", "id": "setname"' +
+              ',"msg":{"dev":"' + clientid +
               '","name":"' + name + '"}}';
+
+        console.log(content);
+        mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
+        return false;
+    }
+
+    function setinterval(clientid)
+    {
+        value = $('#int' + clientid).val();
+
+        content = '{"dev":"' + myDevice + '", "id": "changeinterval"' +
+              ',"msg":{"dev":"' + clientid +
+              '","data":' + value + '}}';
 
         console.log(content);
         mqtt.send("home/kallio/lorabridge/" + myDevice + "/send", content, 0 , false);
@@ -97,14 +144,14 @@
     };
 
 
-    function timeredFunc(id, temperature)
-    {
-        $(id).html(temperature);
-    }
-
     function formatTime(number)
     {
         return number < 10 ? '0' + number : number;
+    }
+
+    function unHiliteRow(id)
+    {
+        $('#line'  + id).removeClass().addClass('blanc');
     }
 
     function onMessageArrived(message) {
@@ -118,6 +165,9 @@
         if (obj.id == "loradata")
         {
             console.log("got loradata");
+            $('#line'  + obj.data.dev).removeClass().addClass('rouge');
+            setTimeout(unHiliteRow,1000, obj.data.dev);
+
             const d = new Date(obj.ts * 1000);
             month      = formatTime(d.getMonth()+1);
             day        = formatTime(d.getDate()+1);
@@ -126,12 +176,17 @@
             seconds    = formatTime(d.getSeconds());
             activetime = `${day}.${month} ${hours}:${minutes}:${seconds}`;
 
+            actualRun  = Math.round(obj.ts - $('#pts'  +  obj.data.dev).html());
+            if (actualRun < 0 || actualRun > 86400)
+            {
+                actualRun = 0;
+            }
             $('#act'  + obj.data.dev).html(activetime);
             $('#batt' + obj.data.dev).html(obj.data.batt);
             $('#rssi' + obj.data.dev).html(obj.data.rssi);
             $('#snr'  +  obj.data.dev).html(obj.data.snr);
             $('#pwr'  +  obj.data.dev).html(obj.data.power);
-            $('#aint' +  obj.data.dev).html(obj.ts - $('#pts'  +  obj.data.dev).html());
+            $('#aint' +  obj.data.dev).html(actualRun);
             $('#pts'  +  obj.data.dev).html(obj.ts);
             
         }
@@ -145,21 +200,32 @@
                 len = $("#F" + device.addr).length;
                 console.log("length is ", len);
 
+                if (device.paired)
+                {
+                    pairButton = '<td><button type="button" onClick=unpair("' + device.addr + '")>UnPair</button></td>';
+                }
+                else
+                {
+                    pairButton = '<td><button type="button" onClick=pair("' + device.addr + '")>Pair</button></td>';
+                }
                 console.log("got device " + device.addr);
                 if (len == 0)
                 {
-                    $('#clients').append('<tr><form id="F' + device.addr + '"><td>' + device.addr + '</td>' +
-                                         '<td><input type="text" id="n' + device.addr + '" onFocusout=setfriendlyname("' + device.addr + '") size=10 value="' + device.name + '"/></td>' +
+                    now = Math.round((Date.now() / 1000),0);
+                    $('#clients').append('<tr id="line' + device.addr + '""><form id="F' + device.addr + '"><td>' + device.addr + '</td>' +
+                                         '<td><input type="text" id="n' + device.addr + '" onChange=setfriendlyname("' + device.addr + '") size=10 value="' + device.name + '"/></td>' +
                                          '<td id="act' + device.addr + '">00 00:00:00</td>' +
                                          '<td id="batt' + device.addr + '">0</td>' +
-                                         '<td id="int' + device.addr + '">' + device.interval + '</td>' +
+                                         '<td><input type="text" id="int' + device.addr + '" onChange=setinterval("' + device.addr + '") size=10 value="' + device.interval + '"/></td>' +
                                          '<td id="aint' + device.addr + '">0</td>' +
+                                         '<td><button type="button" onClick=setRuntime("' + device.addr + '")>setRun</button></td>' +
                                          '<td id="pair' + device.addr + '">' + device.paired + '</td>' +
+                                         pairButton +
                                          '<td id="rssi' + device.addr + '">0</td>' +
                                          '<td id="snr' + device.addr + '">0</td>' +
                                          '<td id="pwr' + device.addr + '">0</td>' +
-                                         '<td id="pts' + device.addr + '">0</td>' +
-                                         '<td><button type="button" onClick=setRuntime("' + device.addr + '")>setRun</button></form></td></tr>');
+                                         '<td id="pts' + device.addr + '">' + now + '</td>' +
+                                         '</form></tr>');
                 }
                 else
                 {
@@ -185,6 +251,7 @@
   </head>
   <body style="background-color:rgb(35, 39, 39); color:white;">
     <h1>Lorabridge setup</h1>
+    <img src="img/lorabridge.jpg" align="right">
     <div>
         <table><tr><td>
         <form> 
@@ -202,7 +269,7 @@
         <form> 
             <table id="clients">
             <tr><thead><th>client</th><th>name</th><th>active</th><th>batt</th><th>intv</th>
-                       <th>aintv</th><th>pair</th><th>rssi</th><th>snr</th><th>power</th></thead></tr>
+                       <th>aintv</th><th></th><th>pair</th><th></th><th>rssi</th><th>snr</th><th>power</th></thead></tr>
             </table>
         </form>
         </td>
