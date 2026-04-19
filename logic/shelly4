@@ -12,6 +12,7 @@ from setup import *
 
 shellyname = "shelly4"
 statsInterval = 300
+idcounter = 100
 
 class relay:
     def __init__(self, index):
@@ -74,6 +75,7 @@ def publishStats():
 
 def publishRelay(rel):
     global shellyname
+
     relaymsg = {
         'id': 'relay',
         'device' : shellyname,
@@ -87,19 +89,20 @@ def publishRelay(rel):
     client.publish(setrelaytopic,json.dumps(relaymsg),qos=1, retain=True)
 
 def setRelay(num, state):
-    global shellyname
+    global shellyname, idcounter
 
     relaymsg = {
-        'id': '20',
-        'src': mqtt_broker.topic_prefix + '/relay/' + str(rel.index) + "/" + shellyname + "/ack",
+        'id': 'id' + str(idcounter),
+        'src': mqtt_broker.topic_prefix + '/relay/' + str(num) + "/" + shellyname + "/ack",
         'method':'Switch.Set',
         'params': {
                 'id':num,
                 'on':state
             }
     }
+    idcounter = idcounter + 1
     setrelaytopic= shellyname + "/rpc"
-    client.publish(setrelaytopic,json.dumps(relaymsg))
+    client.publish(setrelaytopic,json.dumps(relaymsg), qos=1, retain=False)
 
 
 def processData(eldata):
@@ -110,9 +113,10 @@ def processData(eldata):
             # actual relay contact needs to be changed
             contact = eldata['contact']
             newstate = eldata['state']
-            if relays[contact].state != newstate or relays[contact].initdone == False:
-                relays[contact].initdone = True
-                setRelay(contact, newstate)
+            # commented out 11.4.2026
+            # if relays[contact].state != newstate or relays[contact].initdone == False:
+            relays[contact].initdone = True
+            setRelay(contact, newstate)
 
         if (eldata['id'] == 'status'):
             # shelly replied for queryStatus
@@ -125,7 +129,7 @@ def processData(eldata):
             if relays[index].state != result['output']:
                 print(datetime.utcnow(),"relay", index, "differs from housekeeping, informing hometopic")
                 relays[index].state = result['output']
-                publishRelay(index)
+                publishRelay(relays[index])
 
             relays[index].voltage = float(result['voltage'])
             relays[index].current = float(result['current'])
