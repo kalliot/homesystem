@@ -5,6 +5,20 @@
       .bleu {background-color: rgba(1, 16, 99, 0.979); color:rgb(100, 219, 255)}
       .jaune {background-color: rgb(53, 39, 1); color: rgb(253, 223, 168)}
       .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
+
+      a:link, a:visited {
+        color: gray;
+        background-color: transparent;
+        text-decoration: none;
+      }
+
+      a:hover, a:active {
+        color:yellow;
+        background-color: transparent;
+        text-decoration: none;
+      }
+
+
   </style>
 
   <head>
@@ -378,6 +392,16 @@
         }
     };
 
+    function showform(elem)
+    {
+
+        if (elem != '#pidsettings') $('#pidsettings').hide(500);
+        if (elem != '#ntcsetup') $('#ntcsetup').hide(500);
+        if (elem != '#heating') $('#heating').hide(500);
+
+        $(elem).show(500);
+    }
+
 
     $(document).ready(function() {
         myDevice = (new URL(location.href)).searchParams.get('dev');
@@ -390,19 +414,35 @@
   <body style="background-color:rgb(35, 39, 39); color:white;">
     <h1>Thermostat setup</h1>
     <div>
-        <table><tr><td>
+       
+        <a href="javascript:showform('#ntcsetup')">NTC temperature reader parameters ></a><br>
+        <a href="javascript:showform('#heating')">Heating parameters ></a><br>
+        <a href="javascript:showform('#pidsettings')">Heater pid setup ></a>
+
+        <table><tr><td valign="top">
+        <table id="ntcsetup" hidden="true">            
         <form>
-            NTC temperature reader parameters
-            <table>
             <tr><td>Interval</td><td><input type="text" id="ntcinterval" size=5/></td></tr>
             <tr><td>Samples</td><td><input type="text" id="ntcsamplecnt" size=5/></td></tr>
-            <tr><td><button type="button" onClick="setNtcReader()">Set ntc reader</button></td></tr>
+            <tr><td><button type="button" onClick="setNtcReader()">Set ntc reader</button></td></tr>    
+        
+        <tr><td>
+            <label for="id">Calibrate ntc sensor</label><br>
+                <select id="calibrtype">
+                    <option value="calibratehigh">High</option>
+                    <option value="calibratelow">Low</option>
+                </select>
+                <input type="text"
+                id="caltemp"
+                size=5/>
+            <button type="button" onClick="sendcalibration()">Calibrate</button>
         </form>
+        </tr></td>
         <br>
-
+        
         <form> 
             <input type="hidden" id="id" value="heatsetup">
-            <table>
+            <table id="heating" hidden="true">
             <tr><td><label for="target">Target temperature </label></td>
                 <td><input type="text" 
                             id="target" 
@@ -443,19 +483,8 @@
             </table>
         </form>
 
-        <form>
-            <label for="id">Calibrate ntc sensor</label><br>
-                <select id="calibrtype">
-                    <option value="calibratehigh">High</option>
-                    <option value="calibratelow">Low</option>
-                </select>
-                <input type="text"
-                id="caltemp"
-                size=5/>
-            <button type="button" onClick="sendcalibration()">Calibrate</button>
-        </form>
 
-        <form>
+        <form id="pidsettings" hidden>
             <input type="hidden" id="id" value="pidsetup"><br>
             <table>
             <tr><th colspan="2" text-align:center;>Pid setup</th></tr>
