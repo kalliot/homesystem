@@ -7,7 +7,7 @@
       .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
 
       a:link, a:visited {
-        color: gray;
+        color: rgb(245, 238, 238);
         background-color: transparent;
         text-decoration: none;
       }
@@ -135,6 +135,16 @@
               ',"pidki":' + $('#pidki').val() +
               ',"pidkd":' + $('#pidkd').val() + '}';
 
+        console.log(content);
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
+    function sendThrottleSetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "throttle"' +
+              ',"limit":'   + $('#limit').val() +
+              ',"steps":' + $('#steps').val() + '}';
         console.log(content);
         mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
         return false;
@@ -293,6 +303,12 @@
             $('#boostamount').val(obj.boostamount);
             $('#prodhyst').val(obj.prodhyst);
         }        
+        if (obj.id == "throttle")
+        {
+            console.log("got throttle");
+            $('#limit').val(obj.limit);
+            $('#steps').val(obj.steps);
+        }
         if (obj.id == "heatsetup")
         {
             $('#drop').val(obj.drop);
@@ -415,15 +431,23 @@
         }
     };
 
+    const menulines = ["#pidsettings", "#ntcsetup", "#heating", "#tempcoeff", "#throttling"];
+
     function showform(elem)
     {
-
-        if (elem != '#pidsettings') $('#pidsettings').hide(500);
-        if (elem != '#ntcsetup') $('#ntcsetup').hide(500);
-        if (elem != '#heating') $('#heating').hide(500);
-        if (elem != '#tempcoeff') $('#tempcoeff').hide(500);
-
-        $(elem).show(500);
+        for (let i=0; i < 5; i++)
+        {
+            item = menulines[i];
+            if (elem != item)
+            {
+                $(item + 'A').html('>');
+                $(item + 'A').attr("class", "blanc");
+                $(item).hide(500);
+            }
+        }
+        $(elem + 'A').html('v');
+        $(elem + 'A').attr("class", "jaune");
+        $(elem).show(1500);
     }
 
 
@@ -431,6 +455,8 @@
         myDevice = (new URL(location.href)).searchParams.get('dev');
         console.log(myDevice);
         MQTTconnect();
+        $('#heatingA').html('v');
+        $('#heatingA').attr("class", "jaune");
     });
 
     </script>
@@ -440,10 +466,11 @@
     <div>
         <table><tr><td valign="top">
         <table>    
-            <tr><td><a href="javascript:showform('#heating')">Heating parameters ></a></td></tr>  
-            <tr><td><a href="javascript:showform('#ntcsetup')">NTC temperature reader parameters ></a></td></tr>
-            <tr><td><a href="javascript:showform('#pidsettings')">Heater pid setup ></a></td></tr>
-            <tr><td><a href="javascript:showform('#tempcoeff')">Ambient temperature coeff ></a></td></tr>
+            <tr><td><a href="javascript:showform('#heating')">Heating parameters</a></td><td id="heatingA">v</td></tr>  
+            <tr><td><a href="javascript:showform('#ntcsetup')">NTC temperature reader parameters</a></td><td id="ntcsetupA">></td></tr>
+            <tr><td><a href="javascript:showform('#pidsettings')">Heater pid setup</a></td><td id="pidsettingsA">></td></tr>
+            <tr><td><a href="javascript:showform('#tempcoeff')">Ambient temperature coeff</a></td><td id="tempcoeffA">></td></tr>
+            <tr><td><a href="javascript:showform('#throttling')">Throttling setup</a></td><td id="throttlingA">></td></tr>
         </table>
 
         <table id="ntcsetup" hidden="true">            
@@ -538,6 +565,7 @@
             </table>
         </form>
 
+
         <form id="tempcoeff" hidden>
             <input type="hidden" id="id" value="hotday"><br>
             <table>
@@ -569,6 +597,24 @@
                                 size=5/>
                     </td></tr>
             <tr><td><button type="button" onClick="sendAmbSetup()">Update ambient settings</button></td></tr>
+            </table>
+        </form>
+
+        <form id="throttling" hidden>
+            <input type="hidden" id="id" value="throttlesetup"><br>
+            <table>
+            <tr><th colspan="2" text-align:center;>Throttle setup</th></tr>
+            <tr><td><label for="limit">Throttle start temperature (C)</label></td>
+                <td><input type="text"
+                            id="limit"
+                            size=5/>
+                </td></tr>
+            <tr><td><label for="steps">Steps per one exceeding temp (C)</label></td>
+                <td><input type="text"
+                            id="steps"
+                            size=5/>
+                </td></tr>
+            <tr><td><button type="button" onClick="sendThrottleSetup()">Update throttling</button></td></tr>
             </table>
         </form>
 
