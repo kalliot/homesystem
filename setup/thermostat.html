@@ -140,6 +140,20 @@
         return false;
     }
 
+    function sendAmbSetup()
+    {
+        content = '{"dev":"' + myDevice +'", "id": "hotday"' +
+              ',"deduct":'   + $('#deduct').val() +
+              ',"templimit":' + $('#templimit').val() +
+              ',"prodboostlimit":' + $('#prodboostlimit').val() +
+              ',"boostamount":' + $('#boostamount').val() +
+              ',"prodhyst":' + $('#prodhyst').val() + '}';
+
+        console.log(content);
+        mqtt.send("home/kallio/thermostat/" + myDevice + "/setsetup", content, 0 , false);
+        return false;
+    }
+
     // {"dev":"5bdddc","id":"ntcreader","interval":15,"samples":10}
     function setNtcReader()
     {
@@ -270,6 +284,15 @@
             $('#pidki').val(obj.pidki);
             $('#pidkd').val(obj.pidkd);
         }
+        if (obj.id == "hotday")
+        {
+            console.log("got hotday");
+            $('#deduct').val(obj.deduct);
+            $('#templimit').val(obj.templimit);
+            $('#prodboostlimit').val(obj.prodboostlimit);
+            $('#boostamount').val(obj.boostamount);
+            $('#prodhyst').val(obj.prodhyst);
+        }        
         if (obj.id == "heatsetup")
         {
             $('#drop').val(obj.drop);
@@ -398,6 +421,7 @@
         if (elem != '#pidsettings') $('#pidsettings').hide(500);
         if (elem != '#ntcsetup') $('#ntcsetup').hide(500);
         if (elem != '#heating') $('#heating').hide(500);
+        if (elem != '#tempcoeff') $('#tempcoeff').hide(500);
 
         $(elem).show(500);
     }
@@ -414,12 +438,14 @@
   <body style="background-color:rgb(35, 39, 39); color:white;">
     <h1>Thermostat setup</h1>
     <div>
-       
-        <a href="javascript:showform('#ntcsetup')">NTC temperature reader parameters ></a><br>
-        <a href="javascript:showform('#heating')">Heating parameters ></a><br>
-        <a href="javascript:showform('#pidsettings')">Heater pid setup ></a>
-
         <table><tr><td valign="top">
+        <table>    
+            <tr><td><a href="javascript:showform('#heating')">Heating parameters ></a></td></tr>  
+            <tr><td><a href="javascript:showform('#ntcsetup')">NTC temperature reader parameters ></a></td></tr>
+            <tr><td><a href="javascript:showform('#pidsettings')">Heater pid setup ></a></td></tr>
+            <tr><td><a href="javascript:showform('#tempcoeff')">Ambient temperature coeff ></a></td></tr>
+        </table>
+
         <table id="ntcsetup" hidden="true">            
         <form>
             <tr><td>Interval</td><td><input type="text" id="ntcinterval" size=5/></td></tr>
@@ -442,7 +468,7 @@
         
         <form> 
             <input type="hidden" id="id" value="heatsetup">
-            <table id="heating" hidden="true">
+            <table id="heating">
             <tr><td><label for="target">Target temperature </label></td>
                 <td><input type="text" 
                             id="target" 
@@ -509,6 +535,40 @@
                                 size=5/>
                     </td></tr>
             <tr><td><button type="button" onClick="sendPidSetup()">Update PID</button></td></tr>
+            </table>
+        </form>
+
+        <form id="tempcoeff" hidden>
+            <input type="hidden" id="id" value="hotday"><br>
+            <table>
+            <tr><th colspan="2" text-align:center;>Ambient temperature coefficent</th></tr>
+            <tr><td><label for="templimit">Out temperature in C</label></td>
+                <td><input type="text"
+                            id="templimit"
+                            size=5/>
+                </td></tr>
+            <tr><td><label for="deduct">Deduct when over the limit (C)</label></td>
+                <td><input type="text"
+                            id="deduct"
+                            size=5/>
+                </td></tr>
+                <tr><td><label for="boostamount">Temperature boost (C)</label></td>
+                    <td><input type="text"
+                                id="boostamount"
+                                size=5/>
+                    </td></tr>
+
+                <tr><td><label for="prodboostlimit">El. production should be over (W)</label></td>
+                    <td><input type="text"
+                                id="prodboostlimit"
+                                size=5/>
+                    </td></tr>
+                <tr><td><label for="prodhyst">Boost hysteresis (W)</label></td>
+                    <td><input type="text"
+                                id="prodhyst"
+                                size=5/>
+                    </td></tr>
+            <tr><td><button type="button" onClick="sendAmbSetup()">Update ambient settings</button></td></tr>
             </table>
         </form>
 
