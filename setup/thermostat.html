@@ -20,6 +20,7 @@
     var reconnectTimeout = 10000;
     var myDevice = "none";
     var temperatureHysteresis = 0.15;
+    var activeHour = "#wdt0";
 
 
     function MQTTconnect() {
@@ -136,6 +137,19 @@
         return;
     }
 
+    function hiliteCurrentHour(quart)
+    {
+        // lolite previously marked hour
+        $(activeHour).attr("class", "blanc");
+        hour = Math.floor(quart / 100);
+        hour = hour + 2;
+        if (hour == 24) hour = 0;
+        if (hour == 25) hour = 1;
+        if (hour == 26) hour = 2;
+        activeHour = '#wdt' + hour.toString();
+        $(activeHour).attr("class", "jaune");
+    }
+
 
     function setfriendlyname(formid)
     {
@@ -230,6 +244,7 @@
                 $('#hiboost_label').attr("class", "blanc");
                 $('#lodeduct_label').attr("class", "blanc");
             }
+            hiliteCurrentHour(obj.quart);
         }
 
         if (obj.dev != myDevice) return;
@@ -510,53 +525,53 @@
             <table>
                 <tr><th text-align:left;>Workday</th><th text-align:left;>Week end</th></tr>
                 <tr><th text-align:left;>Hours</th><th text-align:left;>Hours</th></tr>
-                <tr><td><input type="checkbox" id="wd0"/><label for="wd0">00</label></td>
-                    <td><input type="checkbox" id="we0"/><label for="we0">00</label></td></tr>
-                <tr><td><input type="checkbox" id="wd1" name="wd1"/><label for="wd1">01</label></td>
+                <tr id="wdt0"><td><input type="checkbox" id="wd0" name="wd0"/><label for="wd0">00</label></td>
+                    <td><input type="checkbox" id="we0" name="we0"/><label for="we0">00</label></td></tr>
+                <tr id="wdt1"><td><input type="checkbox" id="wd1" name="wd1"/><label for="wd1">01</label></td>
                     <td><input type="checkbox" id="we1" name="we1"/><label for="we1">01</label></td></tr>
-                <tr><td><input type="checkbox" id="wd2" name="wd2"/><label for="wd2">02</label></td>
+                <tr id="wdt2"><td><input type="checkbox" id="wd2" name="wd2"/><label for="wd2">02</label></td>
                     <td><input type="checkbox" id="we2" name="we2"/><label for="we2">02</label></td></tr>
-                <tr><td><input type="checkbox" id="wd3" name="wd3"/><label for="wd3">03</label></td>
+                <tr id="wdt3"><td><input type="checkbox" id="wd3" name="wd3"/><label for="wd3">03</label></td>
                     <td><input type="checkbox" id="we3" name="we3"/><label for="we3">03</label></td></tr>
-                <tr><td><input type="checkbox" id="wd4" name="wd4"/><label for="wd4">04</label></td>
+                <tr id="wdt4"><td><input type="checkbox" id="wd4" name="wd4"/><label for="wd4">04</label></td>
                     <td><input type="checkbox" id="we4" name="we4"/><label for="we4">04</label></td></tr>
-                <tr><td><input type="checkbox" id="wd5" name="wd5"/><label for="wd0">05</label></td>
+                <tr id="wdt5"><td><input type="checkbox" id="wd5" name="wd5"/><label for="wd0">05</label></td>
                     <td><input type="checkbox" id="we5" name="we5"/><label for="we0">05</label></td></tr>
-                <tr><td><input type="checkbox" id="wd6" name="wd6"/><label for="wd1">06</label></td>
+                <tr id="wdt6"><td><input type="checkbox" id="wd6" name="wd6"/><label for="wd1">06</label></td>
                     <td><input type="checkbox" id="we6" name="we6"/><label for="we1">06</label></td></tr>
-                <tr><td><input type="checkbox" id="wd7" name="wd7"/><label for="wd2">07</label></td>
+                <tr id="wdt7"><td><input type="checkbox" id="wd7" name="wd7"/><label for="wd2">07</label></td>
                     <td><input type="checkbox" id="we7" name="we7"/><label for="we2">07</label></td></tr>
-                <tr><td><input type="checkbox" id="wd8" name="wd8"/><label for="wd3">08</label></td>
+                <tr id="wdt8"><td><input type="checkbox" id="wd8" name="wd8"/><label for="wd3">08</label></td>
                     <td><input type="checkbox" id="we8" name="we8"/><label for="we3">08</label></td></tr>
-                <tr><td><input type="checkbox" id="wd9" name="wd9"/><label for="wd4">09</label></td>
+                <tr id="wdt9"><td><input type="checkbox" id="wd9" name="wd9"/><label for="wd4">09</label></td>
                     <td><input type="checkbox" id="we9" name="we9"/><label for="we4">09</label></td></tr>
-                <tr><td><input type="checkbox" id="wd10" name="wd10"/><label for="wd10">10</label></td>
+                <tr id="wdt10"><td><input type="checkbox" id="wd10" name="wd10"/><label for="wd10">10</label></td>
                     <td><input type="checkbox" id="we10" name="we10"/><label for="we10">10</label></td></tr>
-                <tr><td><input type="checkbox" id="wd11" name="wd11"/><label for="wd11">11</label></td>
+                <tr id="wdt11"><td><input type="checkbox" id="wd11" name="wd11"/><label for="wd11">11</label></td>
                     <td><input type="checkbox" id="we11" name="we11"/><label for="we11">11</label></td></tr>
-                <tr><td><input type="checkbox" id="wd12" name="wd12"/><label for="wd12">12</label></td>
+                <tr id="wdt12"><td><input type="checkbox" id="wd12" name="wd12"/><label for="wd12">12</label></td>
                     <td><input type="checkbox" id="we12" name="we12"/><label for="we12">12</label></td></tr>
-                <tr><td><input type="checkbox" id="wd13" name="wd13"/><label for="wd13">13</label></td>
+                <tr id="wdt13"><td><input type="checkbox" id="wd13" name="wd13"/><label for="wd13">13</label></td>
                     <td><input type="checkbox" id="we13" name="we13"/><label for="we13">13</label></td></tr>
-                <tr><td><input type="checkbox" id="wd14" name="wd14"/><label for="wd14">14</label></td>
+                <tr id="wdt14"><td><input type="checkbox" id="wd14" name="wd14"/><label for="wd14">14</label></td>
                     <td><input type="checkbox" id="we14" name="we14"/><label for="we14">14</label></td></tr>
-                <tr><td><input type="checkbox" id="wd15" name="wd15"/><label for="wd10">15</label></td>
+                <tr id="wdt15"><td><input type="checkbox" id="wd15" name="wd15"/><label for="wd10">15</label></td>
                     <td><input type="checkbox" id="we15" name="we15"/><label for="we10">15</label></td></tr>
-                <tr><td><input type="checkbox" id="wd16" name="wd16"/><label for="wd11">16</label></td>
+                <tr id="wdt16"><td><input type="checkbox" id="wd16" name="wd16"/><label for="wd11">16</label></td>
                     <td><input type="checkbox" id="we16" name="we16"/><label for="we11">16</label></td></tr>
-                <tr><td><input type="checkbox" id="wd17" name="wd17"/><label for="wd12">17</label></td>
+                <tr id="wdt17"><td><input type="checkbox" id="wd17" name="wd17"/><label for="wd12">17</label></td>
                     <td><input type="checkbox" id="we17" name="we17"/><label for="we12">17</label></td></tr>
-                <tr><td><input type="checkbox" id="wd18" name="wd18"/><label for="wd13">18</label></td>
+                <tr id="wdt18"><td><input type="checkbox" id="wd18" name="wd18"/><label for="wd13">18</label></td>
                     <td><input type="checkbox" id="we18" name="we18"/><label for="we13">18</label></td></tr>
-                <tr><td><input type="checkbox" id="wd19" name="wd19"/><label for="wd14">19</label></td>
+                <tr id="wdt19"><td><input type="checkbox" id="wd19" name="wd19"/><label for="wd14">19</label></td>
                     <td><input type="checkbox" id="we19" name="we19"/><label for="we14">19</label></td></tr>
-                <tr><td><input type="checkbox" id="wd20" name="wd20"/><label for="wd20">20</label></td>
+                <tr id="wdt20"><td><input type="checkbox" id="wd20" name="wd20"/><label for="wd20">20</label></td>
                     <td><input type="checkbox" id="we20" name="we20"/><label for="we20">20</label></td></tr>
-                <tr><td><input type="checkbox" id="wd21" name="wd21"/><label for="wd21">21</label></td>
+                <tr id="wdt21"><td><input type="checkbox" id="wd21" name="wd21"/><label for="wd21">21</label></td>
                     <td><input type="checkbox" id="we21" name="we21"/><label for="we21">21</label></td></tr>
-                <tr><td><input type="checkbox" id="wd22" name="wd22"/><label for="wd22">22</label></td>
+                <tr id="wdt22"><td><input type="checkbox" id="wd22" name="wd22"/><label for="wd22">22</label></td>
                     <td><input type="checkbox" id="we22" name="we22"/><label for="we22">22</label></td></tr>
-                <tr><td><input type="checkbox" id="wd23" name="wd23"/><label for="wd22">23</label></td>
+                <tr id="wdt23"><td><input type="checkbox" id="wd23" name="wd23"/><label for="wd22">23</label></td>
                     <td><input type="checkbox" id="we23" name="we23"/><label for="we22">23</label></td></tr>
                 <tr><td>change<br><input type="text" id="wdchange" size=5/></td><td>change<br><input type="text" id="wechange" size=5/></td></tr>
                 <tr><td><button type="button" onClick="sendBoostSetups()">Update boost hours</button></td></tr>
