@@ -20,10 +20,10 @@ heatpump_restore_temp = -13
 outtemp = 0.0
 auxonly = False
 priceState = 'normal'
-auxchanged = 0
+auxchanged = int(time.time()) - 3530
 useboosthourstemp = 1
 taxedprice = 0.0
-lastemsdata = time.time()
+lastemsdata = int(time.time())
 
 class cop_calculator:
     def __init__(self):
@@ -182,7 +182,7 @@ def getJsonVar(source, name, defvalue):
         return defvalue
 
     if ret != defvalue:
-        print(datetime.utcnow(), "changed", name, "from", defvalue, "to", ret)
+        print(datetime.utcnow(), "json: changed", name, "from", defvalue, "to", ret)
     return ret
 
 
@@ -209,14 +209,16 @@ def setAuxHeater(state):
         print(datetime.utcnow(),"not publishing aux heater request, we are not connected.")
         return
 
-    now = time.time()
+    now = int(time.time())
     diff = now - auxchanged
+    print("-----> auxchanged = ", diff)
     if diff < 3600:
-        print(datetime.utcnow(),"Auxonly change is too fresh:", diff)
+        print(datetime.utcnow(),"Auxonly change is too fresh:", diff, now, auxchanged)
         return
     topic = "ems-esp/boiler/auxheateronly"
     client.publish(topic,state, qos=0, retain=True)
-    print(datetime.utcnow(),"changed auxonly to state:", state)
+    print(datetime.utcnow(),"!changed auxonly to state:", state)
+    auxchanged = int(time.time())
     time.sleep(1)
     return True
 
@@ -225,10 +227,10 @@ def parseEmsTopics(topic, data):
     global auxonly, outtemp, auxchanged, lastemsdata
 
     if (topic == "boiler_data"):
-        lastemsdata = time.time()
+        lastemsdata = int(time.time())
         auxstate = getJsonVar(data,'auxheateronly',auxonly)
         if auxstate != auxonly:
-            auxchanged = time.time()
+            #auxchanged = int(time.time())
             auxonly = auxstate
             desiredTemperatures()
 
@@ -237,7 +239,7 @@ def parseEmsTopics(topic, data):
         return False
 
     elif topic == "thermostat_data":
-        lastemsdata = time.time()
+        lastemsdata = int(time.time())
         if not (data.get('hc1') is None):
             hc1data = data['hc1']
             roomtemp.set(round(getJsonNumericVar(hc1data,'seltemp',roomtemp.value),2))
@@ -320,6 +322,7 @@ def tuneCompressor():
         return False # in init state.
 
     if outtemp < heatpump_min_temp:
+        print(datetime.utcnow(), "out temperature is too low:", outtemp)
         setAuxHeater(True)
         return True
 
@@ -330,12 +333,14 @@ def tuneCompressor():
         offCop = cop.get(outtemp)
         compressorOffPrice = round(nettoprice / offCop,2)
         compressorOnPrice = round(nettoprice / cop.get(outtemp + compressorHysteresis),2)
-        copPublisher.publish(round(offCop,2), compressorOffPrice, compressorOnPrice, burnerprice)
+        copPublisher.publish(round(offCop,2), compressorOnPrice, compressorOffPrice, burnerprice)
+        print(datetime.utcnow(), "burnerprice", burnerprice,"offprice", compressorOffPrice)
         if burnerprice < compressorOffPrice:
             if setAuxHeater(True):
                 print(datetime.utcnow(), "Burner price is now enough low:",burnerprice, "compared to compressor price",compressorOffPrice,". We just burn heatoil.")
                 ret = True
         else:
+            print(datetime.utcnow(), "burnerprice", burnerprice, "compressorOnPrice", compressorOnPrice,"outtemp", outtemp,"restore temp", heatpump_restore_temp)
             if (burnerprice > compressorOnPrice) and (outtemp > heatpump_restore_temp):
                 if setAuxHeater(False):
                     print(datetime.utcnow(), "Burner price:",burnerprice,"is higher than compressor:",compressorOnPrice,". We use aw compressor")
@@ -430,13 +435,13 @@ client.on_connect = on_connect
 client.on_message = on_message
 client.on_disconnect = on_disconnect
 client.connect(mqtt_broker.address,port=mqtt_broker.port, keepalive=60)
-print(datetime.utcnow(), "Start")
+print(datetime.utcnow(), "<Start>")
 client.loop_start()
 
 
 
 while (True):
-    now = time.time()
+    now = int(time.time())
     diff = now - lastemsdata
     if diff > 300:
         print(datetime.utcnow(), "ems-esp problem!")
