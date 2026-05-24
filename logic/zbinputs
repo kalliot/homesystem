@@ -9,6 +9,7 @@ import json
 import sys
 from queue import Queue, Empty
 
+shellyname = "yardlights"
 
 sys.path.insert(1, '/home/pi/config')
 from setup import *
@@ -30,6 +31,23 @@ def publishError(category, code, description):
         client.publish(topic, json.dumps(jsonRec), qos=0, retain=True)
     except:
         print(datetime.utcnow(), "mqtt publish of error failed")
+
+# open / close the safe lock
+def setLightState(state):
+    global shellyname
+
+    relaymsg = {
+        'id': 20,
+        'src': shellyname + '/relayreply',
+        'method':'Switch.Set',
+        'params': {
+                'id':0,
+                'on':state
+            }
+    }
+    setrelaytopic= shellyname + "/rpc"
+    client.publish(setrelaytopic,json.dumps(relaymsg))
+
 
 def relayState(state):
     global mqtt_broker
@@ -57,6 +75,12 @@ def handleButton(data):
             print(datetime.now(), "Relay off")
             relayState(False)
 
+
+def handleMove(data):
+    if not (data.get('occupancy') is None):
+        occupancy = data['occupancy']
+        setLightState(occupancy)
+        print(datetime.now(), "Wc movement", occupancy)
 
 def handleCube(data):
     action = 'none'
@@ -91,6 +115,11 @@ def handleTopics(recData):
         data = json.loads(recData.payload)
         handleCube(data)
 
+    elif item == "wcliike":
+        data = json.loads(recData.payload)
+        handleMove(data)
+
+
 def on_message(client, userdata, message):
     msgqueue.put(message)
 
@@ -105,15 +134,8 @@ def on_connect(client, userdata, flags, rc):
         connected = False
 
 def on_disconnect(client, userdata, rc):
-    if rc!=7:
-        try:
-            client.reconnect()
-        except:
-            print(datetime.now(),"reconnect failed, waiting...")
-            time.sleep(30)
-        
-    else:
-        time.sleep(30)
+    if rc != 0:
+        print(datetime.utcnow(),"Unexpected MQTT disconnect. Will auto-reconnect.")
 
 
 msgqueue = Queue(maxsize=10)    
