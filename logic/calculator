@@ -303,7 +303,7 @@ class Consumers():
                 "solarW"        : self.solarW,
                 "soldW"         : self.soldW,
                 "soldCents"     : round(self.soldCents, 2),
-                "creditedW"     : self.creditedW,
+                "creditedW"     : round(self.creditedW,2),
                 "creditedCents" : round(self.creditedCents,2),
                 "buyPrice"      : round(pricing.buyPrice(),2),
                 "consumers"     : consumerArr
@@ -330,7 +330,7 @@ class Consumers():
                 "ts"            : ts,
                 "solarW"        : self.dailySolarW,
                 "soldW"         : round(self.dailySoldW,2),
-                "creditedW"     : self.dailyCreditedW,
+                "creditedW"     : round(self.dailyCreditedW,2),
                 "creditedCents" : round(self.dailyCreditedCents,2),
                 "heatOilCents"  : round(oilCents,2),
                 "soldCents"     : round(self.dailySoldCents,2),
@@ -433,7 +433,7 @@ def calcQuartChange(newTs : int) -> None:
         creditedCents = round((creditedW / 4000) * pricing.buyPrice(),2)
         print(datetime.utcnow(),'credited solar production is', creditedW, 'W', creditedCents, 'cents')
         print(datetime.utcnow(),'Sold solar production is', netto,'W,',round(pricing.sellPrice() * netto / 1000,1),'cents.')
-        consumers.totals(solar.quartKw , netto, creditedW / 4)
+        consumers.totals(solar.quartKw , netto / 4, creditedW / 4)
     else:
         creditedW = 0
         creditedCents = 0
@@ -453,6 +453,12 @@ def calcQuartChange(newTs : int) -> None:
         print(datetime.utcnow(),'Credited solar production is', creditedW, 'W', creditedCents, 'cents')
         print(datetime.utcnow(),'All the other consumption is', round(otherConsumptionW), 'W', otherCents, 'cents')
     solar.quartChanged(newTs)
+
+def isToday(ts : int) -> bool:
+    today = localtime(int(time()))
+    tm = localtime(ts)
+
+    return today.tm_mday == tm.tm_mday
 
 
 def isDayChanged(ts : int) -> bool:
@@ -480,10 +486,14 @@ def processData(mqttdata) -> None:
         solarW = int(indata['solarW'])
         consumers.setDailies(solarW, int(indata['soldW']), float(indata['soldCents']), int(indata['creditedW']),int(indata['creditedCents']))
         solar.prevSample = round(solarW / 1000, 2)
-        for item in indata['consumers']:
-            consumer = consumers.getConsumer(item['name'])
-            print(datetime.utcnow(),"Reading consumer", item['name'], "start values from the topic.")
-            consumer.setDailies(item['watts'], item['cents'])
+        ts = int(indata['ts'])
+        if isToday(ts):
+            for item in indata['consumers']:
+                consumer = consumers.getConsumer(item['name'])
+                print(datetime.utcnow(),"Reading consumer", item['name'], "start values from the topic.")
+                consumer.setDailies(item['watts'], item['cents'])
+        else:
+            print(datetime.utcnow(),"Not using predailycalc, it is too old.")
         client.unsubscribe(mqtt_broker.topic_prefix + subtopic + "predaily")
 
     elif id == 'thermostat':
@@ -611,15 +621,8 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_disconnect(client, userdata, rc):
-    print(datetime.utcnow(),"disconnected")
-    if rc != 7:
-        try:
-            client.reconnect()
-        except:
-            print(datetime.utcnow(),"reconnect failed, waiting...")
-            sleep(30)
-    else:
-        sleep(1)
+    if rc != 0:
+        print(datetime.utcnow(),"Unexpected MQTT disconnect. Will auto-reconnect.")
 
 
 def on_publish(client, userdata,result):
