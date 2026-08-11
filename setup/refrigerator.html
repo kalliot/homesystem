@@ -41,13 +41,15 @@
         mqtt.connect(options);
     }
 
+
     function sendsetup()
     {
-        content = '{"dev":"' + myDevice +'", "id": "heatsetup"' + 
-              ',"target":' + $('#target').val() + 
-              ',"hiboost":' + $('#hiboost').val() + 
-              ',"lodeduct":' + $('#lodeduct').val() +
-              ',"pwmlen":' + $('#pwmlen').val()+ '}';
+        content = '{"dev":"' + myDevice +'", "id": "setup"' +
+                  ',"temperature":' + $('#temperature').val() +
+                  ',"hysteresis":' + $('#hysteresis').val() +
+                  ',"mintimeon":' + $('#mintimeon').val() +
+                  ',"lopriceboost":' + $('#lopriceboost').val() +
+                  ',"hipricereduce":' + $('#hipricereduce').val()+ '}';
 
         console.log(content);
         mqtt.send("home/kallio/refrigerator/" + myDevice + "/setsetup", content, 0 , false);

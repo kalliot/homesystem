@@ -159,6 +159,7 @@
             $('#progver').html(obj.progversion);
             $('#memfree').html(obj.memfree);
             $('#idfversion').html(obj.idfversion);
+            setTimeout(() => {timeredColor('#progver',obj.progversion);},100);
         }
         if (obj.id == "statistics")
         {
