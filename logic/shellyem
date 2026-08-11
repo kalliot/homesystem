@@ -183,7 +183,8 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_disconnect(client, userdata, rc):
-    client.reconnect()
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+
 
 
 def on_publish(client, userdata,result):

@@ -200,7 +200,7 @@ def on_connect(client, userdata, flags, rc):
 
     print(datetime.utcnow(),"connected, rc=", rc)
     topics = [(mqtt_broker.topic_prefix + "/relay/" + shellyname + "/setstate",0),
-          (shellyname + "/events/rpc",0)]
+              (shellyname + "/events/rpc",0)]
     client.subscribe(topics)
 
 

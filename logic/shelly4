@@ -180,15 +180,11 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_disconnect(client, userdata, rc):
-    print(datetime.utcnow(),"disconnected")
-    if rc != 7:
-        try:
-            client.reconnect()
-        except:
-            print(datetime.utcnow(),"reconnect failed, waiting...")
-            time.sleep(30)
-    else:
-        time.sleep(1)
+    global connected
+
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+    connected = False
+
 
 
 def on_publish(client, userdata,result):

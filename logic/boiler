@@ -14,6 +14,7 @@ sys.path.insert(1, '/home/pi/config')
 from setup import *
 
 shellynumber = 1
+disconnectedts = 0
 burner_max_preheat = 300
 elhysteresis = 200
 flameburning = False
@@ -275,6 +276,7 @@ class Heaters:
     def verify(self, now):
         for relay in self.relays:
             diff = now - relay.pendingTs
+            # todo: changePendings should be reseted in reconnect.
             if relay.changePending and diff > 5: # normally relay replies in less than 20 milliseconds
                 print(datetime.utcnow(),'relay', relay.name, 'number',relay.relay ,'is not alive.','changediff is', diff)
                 publishError("relay", 3003, "remote relay " + relay.name + " is not alive.")
@@ -480,7 +482,7 @@ def processData(eldata):
                         publishAlarm(False,"burner","oil burner started")
                     burner.faultstate = False
                 else:
-                    publishError("boiler", 3013, "burner started, but relay on message is missing.")
+                    publishError("burner", 3013, "burner started, but relay on message is missing.")
                     burner.change(True)
                     burner.state = True
 
@@ -492,7 +494,7 @@ def processData(eldata):
                     if diff < (7 * 60): # stopped really too early, normally to reach even the starttemp takes over 9 minutes
                         pendingDiff = now - burner.pendingTs
                         if burner.pendingState == False and pendingDiff < 5:
-                            publishError("boiler", 3012, "got magnetvalve off before relay acknowledged.")
+                            publishError("burner", 3012, "got magnetvalve off before relay acknowledged.")
                             burner.change(False)
                             burner.state = False # this must be forced here, otherwise stockheater is activated. (stockheater is activated before we get relay reply)
                         else:
@@ -574,8 +576,9 @@ def on_message(client, userdata, message):
 
 def on_connect(client, userdata, flags, rc):
     global shellynumber, boilertempreader, magnetvalve
-    global mqtt_broker
+    global mqtt_broker, disconnectedts
 
+    now = int(time.time())
     if (rc==0):
         heaters.setAlarms(False)
         tempSensors.setAllToState(False)
@@ -590,12 +593,19 @@ def on_connect(client, userdata, flags, rc):
                 (mqtt_broker.topic_prefix + "/sensors/" + boilertempreader + "/parameters/temperature/#",0)
         ]
         client.subscribe(topics)
+        if disconnectedts != 0:
+            offlinetime = now - disconnectedts
+            publishError("comm", 3030, "reconnected, offlinetime was " + str(offlinetime) + " sec")
 
     else:
         print(datetime.utcnow(),"connection failed, rc=",rc)
+    disconnectedts = 0
 
 
 def on_disconnect(client, userdata, rc):
+    global disconnectedts
+
+    disconnectedts = int(time.time())
     print(datetime.utcnow(),"disconnected, rc=", rc)
 
 
