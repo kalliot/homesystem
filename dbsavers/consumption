@@ -23,39 +23,48 @@ mLitersPerSec = 0.63090196
 boilerSensors = "5bcae4"
 burnerGpio = "33"
 
-boilerTemp =    "28b867746008f"
-waterTemp =     "28e1747360083"
-espTemp =       "288f83a130097"
-boilerBottom =  "28eb1f574e13cb0"
-boilerCenter =  "281672574e13c75"
-
 
 shellynumber = 1
 
 def saveTemperature(write_api, data, ts):
     temperature = float(data['value'])
+    err = int(data['err'])
     datats = int(data['ts'])
     text = ""
 
-    if data['sensor'] == boilerTemp:
+    if data['name'] == "top":
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        if (err):
+            p.field("boilerErr", 1).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "boiler"
-    if data['sensor'] == waterTemp:
+
+    if data['name'] == "hotwater":
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("hotWaterTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        if (err):
+            p.field("hotWaterErr", 1).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "hotWater"
-    if data['sensor'] == espTemp:
+
+    if data['name'] == "esp":
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("espTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        if (err):
+            p.field("espErr", 1).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "boilerEsp"
-    if data['sensor'] == boilerBottom:
+
+    if data['name'] == "bottom":
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerBottomTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        if (err):
+            p.field("bottomErr", 1).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "boilBottom"
-    if data['sensor'] == boilerCenter:
+
+    if data['name'] == "center":
         p = influxdb_client.Point("boiler").tag("name", "temperatures").field("boilerCenterTemperature", temperature).time(1000 * datats,write_precision=WritePrecision.MS)
+        if (err):
+            p.field("centerErr", 1).time(1000 * datats,write_precision=WritePrecision.MS)
         text = "boilerCenter"
 
     if text != "":
         write_api.write(bucket="forever", org=influx_credentials.org, record=p)
-        print(datetime.now(), text + "temperature:", temperature, "delay:",ts - datats)
+        print(datetime.now(), text + "temperature:", temperature, "delay:",ts - datats, "err:", err)
 
 
 def saveState(write_api, data, ts):

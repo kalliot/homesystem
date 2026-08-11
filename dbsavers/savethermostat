@@ -14,7 +14,6 @@ from influxdb_client.domain.write_precision import WritePrecision
 
 targetTempInterval = 300
 prevTarget = -273
-prevBrightness = -1
 targetDev = "-"
 lasttargettemp = time.time()
 
@@ -42,29 +41,10 @@ def savePrevTarget():
     print(datetime.now(),"writing targettemp with timeout", now, "value", prevTarget)
     write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
-def savePrevBrightness():
-    global prevBrightness, targetDev
-    storage = "weekly"
-
-    if prevBrightness == -1:
-        return
-
-    client = influxdb_client.InfluxDBClient(
-        url=influx_credentials.url,
-        token=influx_credentials.token,
-        org=influx_credentials.org
-    )
-
-    now = int(time.time())
-
-    write_api = client.write_api(write_options=SYNCHRONOUS)
-    p = influxdb_client.Point("thermostat").tag("name","brightnes").field(targetDev, prevBrightness).time(now,write_precision=WritePrecision.S)
-    print(datetime.now(),"writing brightness with timeout", now, "value", prevBrightness)
-    write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
 
 def saveData(recData):
-    global prevTarget, targetDev, prevBrightness
+    global prevTarget, targetDev
     storage = "weekly"
 
     client = influxdb_client.InfluxDBClient(
@@ -84,7 +64,14 @@ def saveData(recData):
     if ((now - ts) > 7200): # dont save too old data
         return
 
-    if recData['id'] == "temperature":
+    if recData['id'] == "throttling":
+        throttling = int(recData['value'])
+        print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), "throttling", throttling)
+        write_api = client.write_api(write_options=SYNCHRONOUS)
+        p = influxdb_client.Point("thermostat").tag("name","inside").field("throttling", throttling).time(1000 * ts,write_precision=WritePrecision.MS)
+        write_api.write(bucket=storage, org=influx_credentials.org, record=p)
+
+    elif recData['id'] == "temperature":
         temperature = float(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), temperature)
 
@@ -92,7 +79,7 @@ def saveData(recData):
         p = influxdb_client.Point("thermostat").tag("name","temperature").field(recData['sensor'], temperature).time(1000 * ts,write_precision=WritePrecision.MS)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
-    if recData['id'] == "targettemp":
+    elif recData['id'] == "targettemp":
         target = float(recData['value'])
         print(datetime.now(),msgqueue.qsize(), "targettemp:", datetime.fromtimestamp(ts), target, "prevtarget", prevTarget)
 
@@ -109,14 +96,14 @@ def saveData(recData):
         targetDev = recData['dev']
         prevTarget = target
 
-    if recData['id'] == "brightness":
+    elif recData['id'] == "brightness":
         brightness = int(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), "brightness", brightness)
         write_api = client.write_api(write_options=SYNCHRONOUS)
         p = influxdb_client.Point("thermostat").tag("name","display").field("brightness", brightness).time(1000 * ts,write_precision=WritePrecision.MS)
         write_api.write(bucket=storage, org=influx_credentials.org, record=p)
 
-    if recData['id'] == "thermostat":
+    elif recData['id'] == "thermostat":
         level = int(recData['value'])
         print(datetime.now(),msgqueue.qsize(), datetime.fromtimestamp(ts), level)
         write_api = client.write_api(write_options=SYNCHRONOUS)
@@ -130,7 +117,7 @@ def on_message(client, userdata, message):
 
 def on_connect(client, userdata, flags, rc):
     global connected
-    if (rc==0):
+    if rc==0:
         client.subscribe(mqtt_broker.topic_prefix + "/thermostat/+/parameters/#")
         connected = True
     else:
@@ -138,15 +125,7 @@ def on_connect(client, userdata, flags, rc):
         connected = False
 
 def on_disconnect(client, userdata, rc):
-    if rc!=7:
-        try:
-            client.reconnect()
-        except:
-            print(datetime.now(),"reconnect failed, waiting...")
-            sleep(30)
-
-    else:
-        sleep(30)
+    print("disconnected, rc=",rc)            
 
 
 led = 13
