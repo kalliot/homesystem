@@ -1,0 +1,247 @@
+#!/usr/bin/env python
+
+# Read humidity from specific zigbee sensors.
+# Read also battery state from all (listed) battery operated devices.
+
+import os
+import json
+import time
+from datetime import datetime
+from queue import Queue
+import sys
+import paho.mqtt.client as mqtt 
+
+sys.path.insert(1, '/home/pi/config')
+from setup import *
+
+lastVerify = int(time.time())
+verifyInterval       = 7200 # seconds
+battWarnLevel        = 45   # percent
+battAlarmLevel       = 35   # percent
+maxHumidityDeviation = 5    # percent
+
+def reportBatteries(warn, alarm):
+    global mqtt_broker
+
+    now = int(time.time())
+    battmsg = {
+        'id': 'alarm',
+        'reason': 'battery',
+        'ts': now,
+        'warnings': warn,
+        'alarms': alarm
+    }
+    battTopic = mqtt_broker.topic_prefix + "/zigbee/alarm/batteries"
+    client.publish(battTopic,json.dumps(battmsg), qos=0, retain=True) 
+
+def reportHumidity(name, humidity, deviation):
+    global mqtt_broker
+
+    humidTopic = mqtt_broker.topic_prefix + "/zigbee/alarm/humidity"
+    if deviation != 0:
+        now = int(time.time())
+        humidmsg = {
+            'id': 'alarm',
+            'reason': 'humidity',
+            'ts': now,
+            'name': name,
+            'value': humidity,
+            'deviation': deviation
+        }
+        client.publish(humidTopic,json.dumps(humidmsg), qos=0, retain=True) 
+    else:
+        client.publish(humidTopic, None, qos=0, retain=True) 
+
+
+class BattDevice:
+    def __init__(self, name, readhumidity):
+        self.name = name
+        self.readhumidity = readhumidity
+        self.batt = 0
+        self.humidity = 0
+        self.samplets = 0
+
+    def check(self, jsondata):
+        self.samplets = int(time.time())
+        
+        self.batt = jsondata['battery']
+
+        if self.batt < battWarnLevel:
+            print(datetime.utcnow(), self.name, "Batt is low", self.batt)
+        if self.readhumidity:
+            self.humidity = jsondata['humidity']
+            print(datetime.utcnow(), self.name, "humidity is", self.humidity)
+            
+
+class Devices:
+    def __init__(self):
+        self.humidityAlarm = False
+        self.sensors = [BattDevice("nurkkahuone",   True),
+                        BattDevice("olohuone",      True),
+                        BattDevice("sallan_huone",  True),
+                        BattDevice("santerin_huone",True),
+                        BattDevice("makuuhuone",    True),
+                        BattDevice("tiskikone",     False),
+                        BattDevice("lattia",        False),
+                        BattDevice("kitchen_trash", False),
+                        BattDevice("tiskikone",     False),
+                        BattDevice("boiler_door",   False),
+                        BattDevice("balkong_door",  False),
+                        BattDevice("front_door",    False),
+                        BattDevice("button1",       False),
+                        BattDevice("button2",       False),
+                        BattDevice("Cube",          False),
+                        BattDevice("keittio",       False), # Keittio reads humidity, but it shall not be compared to others.
+                        BattDevice("wcliike",       False)]
+
+    def samplereceived(self, name, jsondata):
+        for sensor in self.sensors:
+            if sensor.name == name:
+                sensor.samplets = int(time.time())
+                sensor.check(jsondata)
+
+    def verifyBatt(self):
+        global verifyInterval, battWarnLevel, battAlarmLevel
+        cntNoData   = 0
+        cntOldData  = 0
+        alarmRecords = []
+        warnRecords = []
+
+        now = int(time.time())
+        self.warncnt = 0
+        for sensor in self.sensors:
+            diff = now - sensor.samplets
+            if sensor.samplets == 0:
+                print(datetime.utcnow(), sensor.name, "has not sent data")
+                cntNoData += 1
+            elif diff > verifyInterval:
+                print(datetime.utcnow(), sensor.name, "has", diff, "seconds old data")
+                cntOldData += 1
+            else:
+                if sensor.batt < battAlarmLevel:
+                    print(datetime.utcnow(), sensor.name, "Batt alarm", sensor.batt)
+                    alarmRec = {
+                        'name': sensor.name,
+                        'value' : sensor.batt
+                    }
+                    alarmRecords.append(alarmRec)
+
+                elif sensor.batt < battWarnLevel:
+                    print(datetime.utcnow(), sensor.name, "Batt warning", sensor.batt)
+                    warnRec = {
+                        'name': sensor.name,
+                        'value' : sensor.batt
+                    }
+                    warnRecords.append(warnRec)
+        if len(warnRecords) or len(alarmRecords):
+            reportBatteries(warnRecords, alarmRecords)
+
+        print(datetime.utcnow(), "----> No data cnt=", cntNoData, " Old data cnt=", cntOldData)
+
+    def verifyHumidity(self):
+        global maxHumidityDeviation
+        maxHumidity = 0
+        sumHumidity = 0
+        cntHumidity = 0
+
+        now = int(time.time())
+        for sensor in self.sensors:
+            if sensor.readhumidity and sensor.samplets != 0:
+                if sensor.humidity > maxHumidity:
+                    maxHumidity = sensor.humidity
+                    deviatee = sensor.name
+                sumHumidity += sensor.humidity
+                cntHumidity += 1
+        
+        if cntHumidity > 2: # at least 3 humidity measures is needed for doing the comparison
+            avgHumidity = (sumHumidity - maxHumidity) / (cntHumidity - 1)
+            deviation = round(maxHumidity - avgHumidity, 2)
+            print(datetime.utcnow(), "humidity deviation is", deviation, "in sensor", deviatee)
+            if deviation > maxHumidityDeviation:
+                print(datetime.utcnow(), "*** scary deviation", deviation, "detected in sensor", deviatee,"***")
+                self.humidityAlarm = True
+                reportHumidity(deviatee, maxHumidity, deviation)
+            else:
+                if self.humidityAlarm == True:
+                    print(datetime.utcnow(), "Humidity deviation alarm has disappeared")
+                    reportHumidity(deviatee, 0, 0)
+                    self.humidityAlarm = False    
+                
+
+devices = Devices()
+
+
+def processData(data):
+
+    arr = data.topic.split("/")
+    item = arr[1]
+        
+    if item == "bridge":
+        return
+
+    try:
+        payload = json.loads(data.payload)
+        devices.samplereceived(item, payload)
+        
+
+    except json.decoder.JSONDecodeError as e:
+        print(datetime.utcnow(), "json:", e)
+        print(datetime.utcnow(), payload)
+    
+    except:
+        raise        
+
+
+def on_message(client, userdata, message):
+    msgqueue.put(message)
+
+
+def on_connect(client, userdata, flags, rc):
+    global mqtt_broker
+
+    if rc == 0:
+        topics = [("zigbee2mqtt/#", 0)]
+        client.subscribe(topics)
+        reportHumidity(None, 0, 0)
+    else:
+        print(datetime.utcnow(),"connection failed, rc=",rc)
+
+
+def on_disconnect(client, userdata, rc):
+    print(datetime.utcnow(),"disconnected, rc=", rc)
+
+
+
+
+msgqueue = Queue(maxsize=10)
+
+
+client = mqtt.Client("zbwarnings" + str(os.getpid()))
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.on_disconnect = on_disconnect
+client.connect(mqtt_broker.address,port = mqtt_broker.port, keepalive=60) 
+print(datetime.utcnow(), "Start")
+client.loop_start()
+
+
+while True:
+    now = int(time.time())
+    if now - lastVerify > verifyInterval:
+        devices.verifyBatt()
+        lastVerify = now
+
+    try:
+        data = msgqueue.get(block=True)
+        if data is None:
+            continue
+        processData(data)
+        devices.verifyHumidity()
+
+    except KeyboardInterrupt:
+        client.disconnect()
+        exit(0)
+
+    except:
+        raise        
