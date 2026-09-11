@@ -16,8 +16,8 @@ from setup import *
 
 lastVerify = int(time.time())
 verifyInterval       = 7200 # seconds
-battWarnLevel        = 45   # percent
-battAlarmLevel       = 35   # percent
+battWarnLevel        = 38   # percent
+battAlarmLevel       = 30   # percent
 maxHumidityDeviation = 5    # percent
 
 def reportBatteries(warn, alarm):
@@ -25,26 +25,26 @@ def reportBatteries(warn, alarm):
 
     now = int(time.time())
     battmsg = {
-        'id': 'alarm',
-        'reason': 'battery',
+        'id': 'warning',
+        'source': 'batteries',
         'ts': now,
         'warnings': warn,
         'alarms': alarm
     }
-    battTopic = mqtt_broker.topic_prefix + "/zigbee/alarm/batteries"
+    battTopic = mqtt_broker.topic_prefix + "/zigbee/warning/batteries"
     client.publish(battTopic,json.dumps(battmsg), qos=0, retain=True) 
 
 def reportHumidity(name, humidity, deviation):
     global mqtt_broker
 
-    humidTopic = mqtt_broker.topic_prefix + "/zigbee/alarm/humidity"
+    humidTopic = mqtt_broker.topic_prefix + "/zigbee/warning/humidity"
     if deviation != 0:
         now = int(time.time())
         humidmsg = {
-            'id': 'alarm',
-            'reason': 'humidity',
-            'ts': now,
+            'id': 'warning',
+            'source': 'humidity',
             'name': name,
+            'ts': now,
             'value': humidity,
             'deviation': deviation
         }
@@ -133,8 +133,7 @@ class Devices:
                         'value' : sensor.batt
                     }
                     warnRecords.append(warnRec)
-        if len(warnRecords) or len(alarmRecords):
-            reportBatteries(warnRecords, alarmRecords)
+        reportBatteries(warnRecords, alarmRecords)
 
         print(datetime.utcnow(), "----> No data cnt=", cntNoData, " Old data cnt=", cntOldData)
 
