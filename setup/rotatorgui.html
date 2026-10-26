@@ -16,7 +16,7 @@
     <script src="config.js" type="text/javascript"></script>
 
     <style>
-        .but { -webkit-user-select: none;
+        .turnbutton { -webkit-user-select: none;
                 user-select: none;
                 height:50px;
                 width:100px;
@@ -24,14 +24,13 @@
         .bigfont { font-size: xxx-large}
         .rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
         .blanc {background-color: rgb(43, 43, 43); color: rgb(253, 253, 253)}
-        .namebutton { width:70px; height:80px}
         .hilited:hover {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
-        body { 
+        body {
           width: 100%;
           height: 100vh;
           margin: 0;
           padding: 0;
-          background: rgb(235, 235, 235);  
+          background: rgb(0, 0, 0);
         }
         .center {
             width: 100%;
@@ -52,7 +51,7 @@
         .knob {
             width: 220px;
             height: 220px;
-            background: rgb(222, 222, 222);
+            background: black;
             border-radius:50%;
             position: absolute;
             top: 50%;
@@ -65,10 +64,10 @@
         .knob .rotator {
             width: 150px;
             height: 150px;
-            background: rgb(235, 235, 235);
+            background: black;
             border-radius: 50%;
             box-shadow: 3px 3px 3px rgba(0,0,0,0.2), 
-                        inset 1px 2px 1px white, 
+                        inset 1px 2px 1px black, 
                         2px -1px 1px rgba(0,0,0.0.2),
                         -1px -0px 1px rgba(0,0,0.0.2);
             display: flex;
@@ -79,12 +78,12 @@
         .knob .text {
             width: 40px;
             height: 40px;
-            margin: 0 30px;
+            margin: 0 50px;
             font-family: poppins;
             font-size: 16px;
             font-weight: 600;
-            color: rgb(57, 55, 53);
-            border: 0.3mm solid rgba(57, 55, 53);
+            color: gray;
+            border: 0.3mm solid gray;
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -92,10 +91,10 @@
         }
         .pointer {
             position: absolute;
-            width: 10px;
-            heigth: 10px;
+            width: 20px;
             top: calc(50% - 10px);
             left: 0;
+            color: gray;
             display: flex;
             align-items: center;
             justify-content: flex-start;
@@ -105,14 +104,34 @@
         .pointer span {
             font-size: 60px;
             transform: rotate(165deg);
-            transform: xranslateX(15px);
         }
+        .pointer2 {
+            position: absolute;
+            width: 20px;
+            top: calc(50% - 10px);
+            left: 0;
+            color: darkred;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            transform-origin: 110px 10px;
+            transform: rotate(-45deg);
+        }
+        .pointer2 span {
+            font-size: 60px;
+            transform: rotate(165deg);
+        }
+
+
         circle {
             fill: none;
         }
     </style>
 
 <script>
+
+
+
 
 function setvalue(val)
 {
@@ -121,6 +140,52 @@ function setvalue(val)
     pointer.style.transform = `rotate(${rotationAngle - 45}deg)`;
     text.innerHTML = val;
 }
+
+function requested_azim(val)
+{
+    let pointer = document.querySelector(".pointer2");
+    let rotationAngle = (val + 151) % 360;
+    pointer.style.transform = `rotate(${rotationAngle - 45}deg)`;
+    text.innerHTML = val;
+}
+
+function turnCW()
+{
+    myDevice = "5be9c0";
+    content = '{"dev":"' + myDevice +'", "id": "turn"' +
+                ',"direction":"cw"}';
+    console.log(content);
+    mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
+}
+
+
+function turnCCW()
+{
+    myDevice = "5be9c0";
+    content = '{"dev":"' + myDevice +'", "id": "turn"' +
+                ',"direction":"ccw"}';
+    console.log(content);
+    mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
+}
+
+function stopTurn()
+{
+    myDevice = "5be9c0";
+    content = '{"dev":"' + myDevice +'", "id": "turn"' +
+                ',"direction":"still"}';
+    console.log(content);
+    mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
+}
+
+function startTurning()
+{
+    myDevice = "5be9c0";
+    content = '{"dev":"' + myDevice +'", "id": "newtarget"' +
+            ',"degr":' + $('#targetazim').html() + '}';
+        console.log(content);
+        mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
+}
+
 
 </script>
   
@@ -133,20 +198,27 @@ function setvalue(val)
         <div class="slider">
             <div class="knob">
                 <div class="rotator">
-                    <div class="text">200</div>
+                    <div class="text" id="targetazim">200</div>
                 </div>
                 <div class="pointer">
                     <span class="material-icons">
                         play_arrow
                     </span>
                 </div>
+                <div class="pointer2">
+                    <span class="material-icons">
+                        play_arrow
+                    </span>
+                </div>
+
             </div>
             <svg width="300" height="300">
                 <circle cx="150" cy="150" r="240"></circle>
                 <circle cx="150" cy="150" r="240" id="circle2"></circle>
             </svg>
         </div>
-        <div><button class="namebutton" id="commit" onclick="setvalue(0);">Test</button></div>
+        <div><button class="turnbutton" id="ccwbut" onpointerdown=turnCCW() onpointerup=stopTurn()>CCW</button></div>
+        <div><button class="turnbutton" id="cwbut" onpointerdown=turnCW() onpointerup=stopTurn()>CW</button></div>
     </div>
     
 
@@ -154,6 +226,7 @@ function setvalue(val)
         let knob = document.querySelector(".knob");
         let circle = document.getElementById("circle2");
         let pointer = document.querySelector(".pointer");
+        let pointer2 = document.querySelector(".pointer2");
         let text = document.querySelector(".text");
         var reconnectTimeout = 10000;
         let isRotating = false;
@@ -163,6 +236,7 @@ function setvalue(val)
                 isRotating = true;
             }
         });
+
 
         const rotateKnob = (e) => {
             if (isRotating) {
@@ -178,7 +252,7 @@ function setvalue(val)
                 let rotationAngle = (angleDeg - 135 + 360) % 360;
                 let textAngle = (angleDeg + 360 + 75) % 360;
 
-                pointer.style.transform = `rotate(${rotationAngle - 45}deg)`;
+                pointer2.style.transform = `rotate(${rotationAngle - 45}deg)`;
                 let progressPercent = rotationAngle / 100 ;
                 let textAzimuth     = textAngle / 100;
 
@@ -191,8 +265,14 @@ function setvalue(val)
         document.addEventListener("mousemove", rotateKnob);
         document.addEventListener("onpointerdown", rotateKnob);
 
-        document.addEventListener("mouseup", () => { isRotating = false; });
-        document.addEventListener("onpointerup", () => { isRotating = false; });
+        document.addEventListener("mouseup", () => {
+                isRotating = false;
+                startTurning();
+             });
+        document.addEventListener("onpointerup", () => {
+                isRotating = false;
+                startTurning();
+            });
 
 
         function MQTTconnect() {
@@ -228,7 +308,7 @@ function setvalue(val)
         function onConnect() {
             // Connection succeeded; subscribe to our topic
             //console.log("connected, myDevice is ", myDevice);
-            mqtt.subscribe("home/kallio/rotator/+/#", {qos: 0});
+            mqtt.subscribe("home/kallio/rotator/"+ myDevice + "/#", {qos: 0});
         }
 
 
@@ -244,6 +324,26 @@ function setvalue(val)
             console.log(payload);
             const obj = JSON.parse(payload);
 
+            if (obj.id == "movestate")
+            {
+                if (obj.state == "still")
+                {
+                    stateStill = true;
+                    $('#cwbut').removeClass('rouge');
+                    $('#ccwbut').removeClass('rouge');
+                    pointer2.style.transform = pointer.style.transform;
+                }
+                if (obj.state == "cw")
+                {
+                    statiStill = false;
+                    $('#cwbut').addClass('rouge');
+                }
+                if (obj.state == "ccw")
+                {
+                    statiStill = false;
+                    $('#ccwbut').addClass('rouge');
+                }
+            }
             if (obj.id == "azimuth")
             {   
                 console.log("got azimuth",obj.value);
