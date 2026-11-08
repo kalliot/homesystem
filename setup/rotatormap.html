@@ -40,6 +40,8 @@
 			background-color:wheat;
 		}
 		.rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
+		.verte {background-color: green; color:white; font-weight:bold}
+		.bleu {background-color: lightblue; color:black; font-weight:bold}
 		.leaflet-container {
 			height: 100%;
 			width: 100%;
@@ -65,6 +67,7 @@
 <body>
 
 <div class="box">
+	<div id="activestatus">OFF</div>
 	<button id="butCCW" onpointerdown="turnCCW();" onpointerup="stopTurn();">CCW</button><br>
 	<button id="butCW"  onpointerdown="turnCW();" onpointerup="stopTurn()">CW</button>
 	<hr>
@@ -84,7 +87,8 @@
 	var currentAngle = 0;
 	var currZoom = 19;
 	var targetVisible = false;
-	var myDevice = "5d11a8";
+	var hilitedPosButton = '-';
+	var myDevice = "none";
 	var beamWidth = 10;
 	var reconnectTimeout = 10000;
 	var homeLat = 60.932521;
@@ -166,15 +170,15 @@
 		meters.push({ zoom: 15, m: 6000});
 		meters.push({ zoom: 14, m: 8000});
 		meters.push({ zoom: 13, m: 15000});
-		meters.push({ zoom: 12, m: 30000});
-		meters.push({ zoom: 11, m: 50000});
-		meters.push({ zoom: 10, m: 100000});
-		meters.push({ zoom:  9, m: 150000});
-		meters.push({ zoom:  8, m: 200000});
-		meters.push({ zoom:  7, m: 400000});
-		meters.push({ zoom:  6, m: 800000});
-		meters.push({ zoom:  5, m: 1500000});
-		meters.push({ zoom:  4, m: 1800000});
+		meters.push({ zoom: 12, m: 40000});
+		meters.push({ zoom: 11, m: 70000});
+		meters.push({ zoom: 10, m: 150000});
+		meters.push({ zoom:  9, m: 250000});
+		meters.push({ zoom:  8, m: 350000});
+		meters.push({ zoom:  7, m: 600000});
+		meters.push({ zoom:  6, m: 1000000});
+		meters.push({ zoom:  5, m: 1900000});
+		meters.push({ zoom:  4, m: 2500000});
 
 		for (let i = 0; i < 16; i++)
 		{
@@ -234,6 +238,7 @@
 	{
 		targetPolygon.setLatLngs(buildPolygon(2, currentAngle));
 		targetVisible = false;
+		$('#targetAngle').html('0');
 	}
 
 	function onMapClick(e) {
@@ -243,18 +248,12 @@
 		console.log("mouse pos is", e.latlng.lat, e.latlng.lng, "length id", length);
 		currentAngle = calculateAzimuth(homeLat, homeLng, e.latlng.lat, e.latlng.lng);
 		console.log("angle from home to mouseptr is ", currentAngle);
-
-		$('#targetAngle').html(parseInt(currentAngle));
-	
-		targetPolygon.setLatLngs(buildPolygon(length, currentAngle));
-		targetVisible = true;
 		startTurning(currentAngle);
 	}
 
 	function onZoomed(zoomLevel) {
 		currZoom = zoomLevel;
 
-		// seuraavaksi riittää, että teen turnBeam ja 
 		length = zoom2beamLen(zoomLevel);
 		console.log("length = ", length);
 		if (targetVisible) targetPolygon.setLatLngs(buildPolygon(length, currentAngle));
@@ -298,7 +297,7 @@
         if (azim != currAzim)
         {
             content = '{"dev":"' + myDevice +'", "id": "newtarget"' +
-                    ',"degr":' + azim + '}';
+                    ',"degr":' + parseInt(azim) + '}';
                 mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
         }        
     }
@@ -308,9 +307,8 @@
         content = '{"dev":"' + myDevice +'", "id": "namedtarget"' +
                   ',"name":"' + name + '"}';
         mqtt.send("home/kallio/rotator/" + myDevice + "/set", content, 0 , false);
-		$('#targetAngle').html(azimuth);
-		targetPolygon.setLatLngs(buildPolygon(zoom2beamLen(currZoom), azimuth));
-		targetVisible = true;
+		hideTargetPolygon()
+		currentAngle = azimuth;
     }
 
 
@@ -356,8 +354,7 @@
 
 	function onConnect() {
 		console.log("mqtt connected");
-		mqtt.subscribe("home/kallio/rotator/" + myDevice + "/setup/#", {qos: 0});
-        mqtt.subscribe("home/kallio/rotator/"+ myDevice + "/#", {qos: 0});
+		mqtt.subscribe("home/kallio/rotator/"+ myDevice + "/#", {qos: 0});
 		mqtt.subscribe("home/kallio/devices/" + myDevice, {qos: 0});
     }
 
@@ -370,26 +367,30 @@
     function onMessageArrived(message) {
 
         var payload = message.payloadString;
-
         const obj = JSON.parse(payload);
+
+		if (obj.dev != myDevice) return;
 
 		if (obj.id == "device" && obj.type=="rotator")
         {
             if (obj.connected == 1)
             {
-                //$('#activestatus').html('rotator is active');
+                $('#activestatus').html('ON');
+				$('#activestatus').addClass('verte');
 				console.log("rotator is active");
             }
             if (obj.connected == 0)
             {
-                //$('#activestatus').html('device is not active');
-				console.log("rotator is not running");
+                $('#activestatus').html('OFF');
+				$('#activestatus').removeClass('verte');
+				console.log("rotator is switched off");
             }
         }
+		console.log("id=",obj.id);
 		if (obj.id == "settings")
 		{
 			beamWidth = parseInt(obj.beamwidth);
-			console.log("beamwidth", beamWidth);
+			console.log("received new beamwidth", beamWidth);
 		}
         if (obj.id == "movestate")
         {
@@ -397,39 +398,86 @@
             {
                 $('#butCW').removeClass('rouge');
                 $('#butCCW').removeClass('rouge');
-				if (obj.reason != "dirchange")
+				if (obj.reason == "dirchange")
+				{
+					hideTargetPolygon();
+				}
+				else
 				{
 					setTimeout(hideTargetPolygon, 1200);
-				}	
+				}
             }
             if (obj.state == "cw")
             {
                 $('#butCW').addClass('rouge');
+				if (obj.target != -1)
+				{
+					targetVisible = true;
+					console.log(beamWidth);
+					targetPolygon.setLatLngs(buildPolygon(zoom2beamLen(currZoom), obj.target));
+					$('#targetAngle').html(obj.target);
+				}
             }
             if (obj.state == "ccw")
             {
                 $('#butCCW').addClass('rouge');
+				if (obj.target != -1)
+				{
+					targetVisible = true;
+					console.log(beamWidth);
+					targetPolygon.setLatLngs(buildPolygon(zoom2beamLen(currZoom), obj.target));
+					$('#targetAngle').html(obj.target);
+				}
             }
         }
         if (obj.id == "azimuth")
         {   
 			turnBeam(obj.value);
+
+			if (hilitedPosButton != '-' && hilitedPosButton != obj.name)
+			{
+				$('#' + hilitedPosButton).removeClass('bleu');
+				hilitedPosButton = '-';
+			}
+
+			if (obj.name != '-' && hilitedPosButton != obj.name)
+			{
+				// in start, hilite should be delayed.
+				// because namebuttons are not ready (received), yet.
+				if (hilitedPosButton == '-')
+				{
+					console.log("showing hilited name");
+					hilitedPosButton = obj.name;
+					setTimeout(showHilitedName, 100);
+				}
+				else
+				{
+					$('#' + obj.name).addClass('bleu');
+					hilitedPosButton = obj.name;
+				}
+			}
 		}
         if (obj.id == "nametable")
         {
-            
             $('#nameTable tbody').empty(); // remove lines from names table, otherwise its appended every time.
             namearr = obj.names;
             for (rec of namearr)
             {
-                addstr = '<tr><td><button onclick=turnNamed("' + rec.name + '",'+ rec.azimuth +')>' + rec.name + '</button></td></tr>';
+                addstr = '<tr><td><button id="'+ rec.name + '"onclick=turnNamed("' + rec.name + '",'+ rec.azimuth +')>' + rec.name + '</button></td></tr>';
 				console.log(addstr);
                 $('#nameTable').append(addstr);
             }
         }
     }    
 
+	function showHilitedName()
+	{
+		console.log("hilitedPosButton=", hilitedPosButton);
+		$('#' + hilitedPosButton).addClass('bleu');
+	}
+
 	$(document).ready(function() {
+		myDevice = (new URL(location.href)).searchParams.get('dev');
         console.log(myDevice);
         MQTTconnect();
     });
