@@ -23,6 +23,8 @@
 		button {
 			width: 99%;
 			height: 35px; 
+			color:lightgray;
+			background-color:rgb(11, 15, 146);
 		}
 		.angledisp {
 			width: 100%;
@@ -37,7 +39,8 @@
 			width: 70px;
 			left: 99%;
 			margin-left: -65px;
-			background-color:wheat;
+			color:white;
+			background-color:rgb(7, 7, 110);
 		}
 		.rouge {background-color: rgb(59, 2, 2); color:rgb(253, 178, 178); font-weight:bold}
 		.verte {background-color: green; color:white; font-weight:bold}
@@ -47,6 +50,9 @@
 			width: 100%;
 			max-width: 100%;
 			max-height: 100%;
+		}
+		.leaflet-tile {
+			-webkit-filter: hue-rotate(180deg) invert(100%);
 		}
 		.legend {
 			line-height: 18px;
@@ -85,7 +91,7 @@
 	var targetPolygon;
 	var rotatorPolygon;
 	var currentAngle = 0;
-	var currZoom = 19;
+	var currZoom = 16;
 	var targetVisible = false;
 	var hilitedPosButton = '-';
 	var myDevice = "none";
@@ -141,7 +147,7 @@
 		minZoom : 3,
 		maxZoom : 19
 	});
-	map.setView([homeLat, homeLng], 19);
+	map.setView([homeLat, homeLng], 16);
 
 
 	const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -185,7 +191,7 @@
 			if (meters[i].zoom == zoomLevel)
 				return meters[i].m;
 		}
-		return 2000000;
+		return 3000000;
 	}
 
 	
@@ -320,7 +326,7 @@
 
 
 	targetPolygon = createBeam('red', 'This is a target direction.');
-	rotatorPolygon = createBeam('blue', 'Not turning, i am close to the beam.');
+	rotatorPolygon = createBeam('lightblue', 'Not turning, i am close to the beam.');
 
     function MQTTconnect() 
 	{
